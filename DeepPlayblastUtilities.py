@@ -181,12 +181,9 @@ def DeepPlayblastPushNamespaceMaterials():
             nsShader=listConnections((shadingGroups[i] + ".namespaceShader"),
                 s=1,d=0)
             if len(nsShader) and not isConnected((nsShader[0] + ".outColor"),(shadingGroups[i] + ".surfaceShader")):
-                connectAttr((shadingGroups[i] + ".surfaceShader"),
-                    f=(nsShader[0] + ".outColor"))
-
-
-
-
+                connectAttr((nsShader[0] + ".outColor"),
+                            (shadingGroups[i] + ".surfaceShader"),
+                            f=True)
 
 # -------------------------------------------------------------------------------------------------
 # Switch to normal materials for objects that needed the fallback method of material assignment (see notes in DeepPlayblastMakeNamespaceRenderLayer)
@@ -198,8 +195,9 @@ def DeepPlayblastPopNamespaceMaterials():
             defaultShader=listConnections((shadingGroups[i] + ".defaultShader"),
                 s=1,d=0)
             if len(defaultShader) and not isConnected((defaultShader[0] + ".outColor"),(shadingGroups[i] + ".surfaceShader")):
-                connectAttr((shadingGroups[i] + ".surfaceShader"),
-                    f=(defaultShader[0] + ".outColor"))
+                connectAttr((defaultShader[0] + ".outColor"),
+                            (shadingGroups[i] + ".surfaceShader"),
+                            f=True)
 
 # ---------------------------------------------------------------------------------------------------
 # Prepare for deep playblast by making a namespace render layer
@@ -531,7 +529,7 @@ def DeepPlayblastMakeXML(strucfile,deepPlayblastFile,namespaceTrack):
     result+="</DeepPlayblast>\n"
     return result
 
- def _pushRenderLayer(renderLayer):
+def pushRenderLayer(renderLayer):
 	melGlobals.initVar( 'string', 'gRFXPlayblastModelPanel' )
 	melGlobals.initVar( 'string[]', 'gMeshesWithColorsOn' )
 	melGlobals.initVar( 'string[]', 'gGpuMeshes' )
@@ -560,11 +558,11 @@ def DeepPlayblastMakeXML(strucfile,deepPlayblastFile,namespaceTrack):
 		setAttr((str(obj) + ".displayColors"),
 			0)
 
-	mel.DeepPlayblastHandleGpuMeshRenderLayer(melGlobals['gGpuMeshes'], 1)
-	mel.DeepPlayblastPushNamespaceMaterials()
+	DeepPlayblastHandleGpuMeshRenderLayer(melGlobals['gGpuMeshes'], 1)
+	DeepPlayblastPushNamespaceMaterials()
 
 
-def _popRenderLayer():
+def popRenderLayer():
 	melGlobals.initVar( 'string', 'gRFXPlayblastModelPanel' )
 	melGlobals.initVar( 'string[]', 'gMeshesWithColorsOn' )
 	melGlobals.initVar( 'string[]', 'gGpuMeshes' )
@@ -584,6 +582,6 @@ def _popRenderLayer():
 		setAttr((str(obj) + ".displayColors"),
 			1)
 
-	mel.DeepPlayblastHandleGpuMeshRenderLayer(melGlobals['gGpuMeshes'], 0)
-	mel.DeepPlayblastPopNamespaceMaterials()
+	DeepPlayblastHandleGpuMeshRenderLayer(melGlobals['gGpuMeshes'], 0)
+	DeepPlayblastPopNamespaceMaterials()
 
