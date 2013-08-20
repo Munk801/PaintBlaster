@@ -83,29 +83,29 @@ Revisions:  05/22/12    Rev 1.0     mjefferies
 To-do's:
         - Move to-do's to revisions as they are done
 '''
-# ---------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # source statements
 #
-# ---------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # global variables
 #
-# ---------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # load all plug-ins required for this mel script
-# ---------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 def _loadPlugins():
     if not pluginInfo("xml_parser",
         q=1,l=1):
         loadPlugin("xml_parser")
 
-    if not pluginInfo("fileQuery",
-        q=1,l=1):
-        loadPlugin("fileQuery")
+    # if not pluginInfo("fileQuery",
+    #     q=1,l=1):
+    #     loadPlugin("fileQuery")
 
     mel.eval("source \"parseXML.mel\";")
     # mel.eval("source \"AnimSlicesUtilities.mel\";")
 
 
-# -------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 def stringArrayReverse(array):
     result=[]
     s=len(array) - 1
@@ -115,8 +115,9 @@ def stringArrayReverse(array):
     return result
 
 
-# -------------------------------------------------------------------------------------------------
-def _getNamespaceInfoFromStructureFile(strucfile,namespaces,paths,versions,types,phases,masterCam):
+# ----------------------------------------------------------------------------
+def _getNamespaceInfoFromStructureFile(strucfile,namespaces,paths,
+                                       versions,types,phases,masterCam):
     # namespaces=[]
     # paths=[]
     # versions=[]
@@ -141,7 +142,7 @@ def _getNamespaceInfoFromStructureFile(strucfile,namespaces,paths,versions,types
 
 
 
-# -------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 def _getRandomColors(namespaces,colors,combineSetColors):
     # colors=[]
     for i in range(0,len(namespaces)):
@@ -165,50 +166,57 @@ def _getRandomColors(namespaces,colors,combineSetColors):
 
 
 
-# -------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 def _getColors(namespaces,colors):
     combineSetColors=1
     _getRandomColors(namespaces, colors, combineSetColors)
 
 
-# -------------------------------------------------------------------------------------------------
-# Switch to namespace materials for objects that needed the fallback method of material assignment (see notes in DeepPlayblastMakeNamespaceRenderLayer)
-# -------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Switch to namespace materials for objects that needed the fallback method of
+# material assignment (see notes in DeepPlayblastMakeNamespaceRenderLayer)
+# ----------------------------------------------------------------------------
 def DeepPlayblastPushNamespaceMaterials():
     shadingGroups=ls(type="shadingEngine")
     for i in range(0,len(shadingGroups)):
         if objExists(shadingGroups[i] + ".namespaceShader"):
             nsShader=listConnections((shadingGroups[i] + ".namespaceShader"),
                 s=1,d=0)
-            if len(nsShader) and not isConnected((nsShader[0] + ".outColor"),(shadingGroups[i] + ".surfaceShader")):
+            if len(nsShader) and not isConnected((nsShader[0] + ".outColor"),
+                                                 (shadingGroups[i] +
+                                                  ".surfaceShader")):
                 connectAttr((nsShader[0] + ".outColor"),
                             (shadingGroups[i] + ".surfaceShader"),
                             f=True)
 
-# -------------------------------------------------------------------------------------------------
-# Switch to normal materials for objects that needed the fallback method of material assignment (see notes in DeepPlayblastMakeNamespaceRenderLayer)
-# -------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Switch to normal materials for objects that needed the fallback method of
+# material assignment (see notes in DeepPlayblastMakeNamespaceRenderLayer)
+# ----------------------------------------------------------------------------
 def DeepPlayblastPopNamespaceMaterials():
     shadingGroups=ls(type="shadingEngine")
     for i in range(0,len(shadingGroups)):
         if objExists(shadingGroups[i] + ".defaultShader"):
             defaultShader=listConnections((shadingGroups[i] + ".defaultShader"),
                 s=1,d=0)
-            if len(defaultShader) and not isConnected((defaultShader[0] + ".outColor"),(shadingGroups[i] + ".surfaceShader")):
+            if len(defaultShader) and not isConnected((defaultShader[0] +
+                                                       ".outColor"),
+                                                      (shadingGroups[i] +
+                                                       ".surfaceShader")):
                 connectAttr((defaultShader[0] + ".outColor"),
                             (shadingGroups[i] + ".surfaceShader"),
                             f=True)
 
-# ---------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Prepare for deep playblast by making a namespace render layer
-# ---------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
     _loadPlugins()
     # this code is a hack to get around a problem with render layers in maya
     assigned = sets("initialShadingGroup", q=True)
     if assigned:
         defaultLambert=str(shadingNode("lambert", asShader=True))
-        # account for the possibility of lambert1 having been adjusted, mapped, etc
+        # account for the possibility of lambert1 having been adjusted, mapped
         attrs=listAttr("lambert1", s=1,r=True,k=1,se=1)
         for i in range(0,len(attrs)):
             numChildAttrs=attributeQuery(attrs[i], nc=1,n="lambert1")
@@ -239,24 +247,20 @@ def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
                     rm="initialShadingGroup",e=1) ):
                     print "Problem removing " + assigned[i] + " from the initialShadingGroup\n"
 
-
                 else:
                     cmds.sets(assigned[i],
                         e=1,fe=shadingGroup)
 
-
-
-
     namespaces=[]
     colors=[]
+    # XXX TODO: This will need to be changed to use the database
     _getNamespaceInfoFromStructureFile(strucfile, namespaces, [], [], [], [], [])
     _getColors(namespaces, colors)
     # gpuMeshes=[]
     oldNamespace=str(namespaceInfo(currentNamespace=True))
     oldRenderLayer=str(editRenderLayerGlobals(q=1,currentRenderLayer=1))
     layer=""
-    for i in range(0,len(namespaces)):
-        cur_namespace=namespaces[i]
+    for i, cur_namespace in enumerate(namespaces):
         if cur_namespace == "stereoCam":
             continue
 
@@ -265,10 +269,7 @@ def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
 
         if catch( lambda: namespace(set=(":" + cur_namespace)) ):
             continue
-        color=colors[i]
-        r=color[0]
-        g=color[1]
-        b=color[2]
+        (red, green, blue) = colors[i]
         select(namespaceInfo(dp=1, lod=True), replace=True)
         geom=ls(visible=1,type=['mesh', 'nurbsSurface'],dag=1,ni=1,sl=1)
         gpuMesh=[]
@@ -280,7 +281,7 @@ def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
         if len(geom)>0:
             material=str(shadingNode('surfaceShader', asShader=True))
             setAttr((material + ".outColor"),
-                r,g,b,
+                red,green,blue,
                 type='double3')
             shader=str(cmds.sets(renderable=True,
                                  noSurfaceShader=True, empty=True))
@@ -381,7 +382,7 @@ def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
             for j in range(0,len(gpuMesh)):
                 editRenderLayerMembers(layer,gpuMesh[j])
                 setAttr((gpuMesh[j] + ".defaultColor"),
-                    r,g,b,
+                    red,green,blue,
                     type='double3')
                 gpuMeshes.append(gpuMesh[j])
 
