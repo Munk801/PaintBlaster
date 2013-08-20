@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ShotGroup GroupName="0310" SequenceID="4041" ShotGroupID="24362" FrameRangeStart="101" FrameRangeEnd="191" >
+	<UpdateInfo Script="AnimSlicesUtilities.mel" Action="Updating to add and remove assets in slice chars" Filename="/data/entertainment/18842_turkeys_production/cg/untitled"  />
+	<Shots>
+		<Shot ShotID="24362" ShotNumber="0310" SequenceID="4041" FrameRangeStart="101" FrameRangeEnd="191"  />
+	</Shots>
+	<Assets>
+		<Asset AssetID="17379" Name="dog_ll" FolderName="dog_ll" Path="/people/slu/color_blast/" Version="0001" AssetType="Character" AssetTypeID="9" Namespace="dog_ll" RefNode="dog_ll:master" Omitted="0" Phase="ani" MasterCamera="0"  />
+	</Assets>
+	<Cameras>
+	</Cameras>
+	<AnimSlices>
+		<Slice Name="chars">
+			<Namespace Name="dog_ll" />
+		</Slice>
+		<Slice Name="bg">
+		</Slice>
+		<Slice Name="set">
+		</Slice>
+		<Slice Name="cam">
+		</Slice>
+	</AnimSlices>
+</ShotGroup>

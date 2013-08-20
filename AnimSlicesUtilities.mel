@@ -1,0 +1,4296 @@
+// AnimSlicesUtilities.mel (c) 2012 ReelFX Creative Studios
+// Verision 1.0
+// author: Michael Jefferies
+
+/*
+Description:
+    A collection of utility functions for animation slices:
+
+    AnimSlicesGetSliceString slice
+        Get the full slice string from the slice name
+
+    AnimSlicesGetSeqShotSliceString sequence shot slice
+        Get the full seq shot slice string from the sequence shot and slice
+
+    AnimSlicesGetTaskNameFromSlice slice
+        Get the task name from the slice
+
+    AnimSlicesGetSliceFromTaskName taskname
+        Get the slice from the task name
+
+    AnimSlicesGetNamespaces sequence shot slice namespaces reserved
+        Gets the list of namespaces in a sequence, shot, and slice
+
+    AnimSlicesGetSlices sequence shot sliceNames namespacesInSlice namespaces reserved
+        Get the list of all slices and the namespaces they are in
+
+    AnimSlicesGetSlicesFromStructureFile strucfile sliceNames namespacesInSlice namespaces reserved
+        Get the list of all slices and the namespaces they are in from a structure file
+
+    AnimSlicesGetSlicesFromXmlString strucfile sliceNames namespacesInSlice namespaces reserved
+        Get the list of all slices and the namespaces they are in from an xml string
+
+    AnimSlicesGetSliceNames sequence shot
+        Get the list of slice names in a shot
+
+    AnimSlicesAssetListFromStructureFile sequence shot namespaces assetTypes assetNames refNodes cachefiles slices sliceNames
+        Fills arrays with information from the structure file for a sequence and shot
+
+    AnimSlicesGetMasterCameras sequence shot namespaces slices
+        Get the master cameras and slice information for the given sequence and shot
+
+    AnimSlicesUpdateStructure sequence shot slice namespaces refNodes deferred assets
+        Read the structure file and update it with the given updated slice information
+
+    AnimSlicesUpdateStructureFromCurrent sequence shot slice, namespaces, okayToAdd
+        Read the structure file and update it using the current slice namespaces,
+        only adding namespaces if they are in the okayToAdd array
+
+    AnimSlicesReserveNamespace sequence shot slice asset
+        Reserve a namespace for the given asset, an unused namespace will be based on the given asset name and returned
+
+    AnimSlicesSyncSetAssemblyCache sequence shot namespace
+        Sync the set assembly cache node
+
+    AnimSlicesSyncCaches sequence shot slice
+        Updates the anim slice caches in the current file to match the shot's structure file
+
+    AnimSlicesMakeFiles sequence shot
+        Creates anim slice files using the shot's ani file and splits according to the shot's structure file
+
+    AnimSlicesDeleteCachedRigs namespaces refNodes
+        Deletes cached rigs from the currently opened file
+
+    AnimSlicesForceAllCaches visibility colorMode
+        Forces the state of visibility and colorMode for all cache nodes in the currently opened file
+
+    AnimSlicesSetGpuCacheDisplay on
+        Turn on and off the drawing of alembic gpu caches
+
+    AnimSlicesSetHQGraphicsAllCaches hqMode
+        Set the state of the highQualityGraphics attribute for all mesh gpu cache nodes in the currently opened file
+
+    AnimSlicesUpdateAllCaches
+        Updates all cache nodes in the currently opened file
+
+    AnimSlicesExportCache cache_output_dir frameStart frameEnd namespaces exportVersions exportControls component printPrefix
+        Export cache for the given rigs in the currently opened file
+
+    AnimSlicesGetCacheFilenames
+        Return a list of all of the latest cache filenames that are used by a given slice.  This can be used
+        to fill out a manifest file.
+
+    AnimSlicesBuildShotFromCaches sequence shot namespace parent timeNode centerOnSetNamespace ignoreNamespaces loadPrevis
+        Imports cache nodes in order to build a complete shot from cache
+
+Dependancies:
+    getPath.mel
+    getVersion.mel
+    getPhysicalLocation.mel
+    stringArrayFindIndex.mel
+    parseXML.mel
+    SetAssemblyUtilities.mel
+    isVisible2.mel
+    fileIO.mel
+    buildExportControlList.mel
+    getNamespaceFromString.mel
+    insightGetShotXML.mel (only if physical location is DFW/LAX)
+    insightGetAssetXML.mel (only if physical location is DFW/LAX)
+    assetTypeFromName.mel (only if physical location is DFW/LAX)
+    assetTypeFromID.mel (only if physical location is DFW/LAX)
+    lookupAssetTypeID.mel (only if physical location is DFW/LAX)
+    padNumber.mel (only if physical location is DFW/LAX)
+    set_assembly_sync.py
+    xml_parser plug-in
+    fileQuery plug-in
+    rfx_alembic plug-in
+    rfx_http_get plug-in
+
+Documentation:
+
+Examples:
+
+Notes:
+
+
+Bugs:
+
+Original:   02/22/12
+Revisions:  04/17/12    Rev 1.1     mjefferies
+            - Split plugin loading to two functions, since only AnimSlicesSyncCaches requires the rfx_alembic plugin
+
+            04/27/12    Rev 1.2     mjefferies
+            - added some additional functions to synching so that caches are placed inside a group depending
+            on which slice they are in.  Also changed the UpdateAllCaches function to do a full sync, instead
+            of just forcing a reload, in order to load and remove functions
+            - Moved the bulk of the export logic from the AnimSlicesCacheExport module to here so that it
+            can be called from the alembic cache manager gui as well.
+
+            05/01/12    Rev 1.3     mjefferies
+            - Made loading of rfx_alembic plugin only occur if necessary, also added a check for a refnodes
+            existence before attempting to delete it.
+
+            05/18/12    Rev 1.4     mjefferies
+            - Made some tweaks to support features for new version of the rfx_alembic plugin
+
+            05/24/12    Rev 1.5     mjefferies
+            - Added some calls to access slice info using a given structure file rather than seq & shot
+
+            06/08/12    Rev 1.6     mjefferies
+            - Added support for set assembly
+
+            06/13/12    Rev 1.7     mjefferies
+            - Use file size rather than checksum to improve performance of moving the exported cache files
+
+            06/14/12    Rev 1.8     mjefferies
+            - Add some additional checking and consider a cache with an empty usage to be an animslices cache
+
+            07/02/12    Rev 1.9     mjefferies
+            - Added check to make sure not trying to parent a node to a group with and empty group name
+
+            07/13/12    Rev 1.10    mjefferies
+            - Needed to add handling for removing non-master cameras in AnimSlicesMakeFiles, since they will
+            not be assigned to any slices, so they won't be removed when removing assets in other slices.
+
+            07/16/12    Rev 1.11    mjefferies
+            - Need to unlock the master camera reference so that it can be driven by the alembic cache node.
+
+            07/17/12    Rev 1.12    mjefferies
+            - Bugfix: Need to look for the master cam namespace and not node name in the namespaces list
+
+            07/17/12    Rev 1.13    mjefferies
+            - Bugfix: Ignore non-master cameras when updating the structure file
+
+            07/18/12    Rev 1.14    mjefferies
+            - Added code to update the phase of rigs when the structure file is updated
+
+            07/23/12    Rev 1.15    mjefferies
+            - When exporting cache from a rig that has the getPointCacheGeometry() set, added a check for
+            if the object is visible before including it in the cache export
+
+            07/26/12    Rev 1.16    mjefferies
+            - Use isVisible2 instead of isVisible for checking visibility, and also observe the setting
+            of the sliceVisibility attribute in this script since the exporter will only check it
+            when traversing the children of a passed in node
+
+            07/26/12    Rev 1.17    mjefferies
+            - Use filename instead of fileInfo's to get sequence, shot and slice
+
+            07/27/12    Rev 1.18    mjefferies
+            - Switched return type of AnimSlicesMakeFiles to an array of strings which are slice/filename pairs
+            for the sucessfully created slices.
+
+            07/27/12    Rev 1.19    mjefferies
+            - Switched getting slice back to fileInfo instead of filename, for proper handling of wip files
+
+            07/27/12    Rev 1.20    mjefferies
+            - Tweaked the set assembly cache process slightly so that it could be called from the alembic cache manager
+
+            07/29/12    Rev 1.21    hmichalakeas
+            - Fixed a small bug in AnimSlicesSyncCaches (we were iterating through used_ns - testing namespaces[i] for inclusion in props,
+            but then removing current_ns[i] if not found and not used - but used_ns and current_ns are in the same order, while namespaces isn't)
+
+            07/30/12    Rev 1.22    mjefferies
+            - Added a function to update the structure file from the live maya file, so that the structure file
+            could be updated by the slice cache manager
+
+            08/01/12    Rev 1.23    mjefferies
+            - Added a functions to support transferring set assembly assets from a different slice to the current
+
+            08/01/12    Rev 1.24    mjefferies
+            - Additional handling so transferred set assembly rigs show up as guests in set assembly sync
+
+            08/01/12    Rev 1.25    mjefferies
+            - Added reading in asset visibility of set assembly caches
+
+            08/01/12    Rev 1.26    mjefferies
+            - Added in a missing call to update cache attributes when syncing a set assembly cache
+
+            08/08/12    Rev 1.27    mjefferies
+            - Instead of deleting the non-master cams, they are just disconnected from the master cam and renamed
+            so that they can be used as a dupeCam by animation
+
+            08/10/12    Rev 1.28    mjefferies
+            - Changed the process for disconnecting the master cam from the non-master camera and also added
+            a call to update the name attribute on the cameraBoomRig when renaming to dupeCam
+
+            08/16/12    Rev 1.29    hmichalakeas
+            - Implemented sliceReplaceVisibility - use another object's visibility to determine whether an object should be exported.
+
+            08/16/12    Rev 1.30    mjefferies
+            - Added call to get latest xml for a set assembly sync from the set_assembly_sync module,
+            which will also apply any changes to the set definition in the case where the latest cache
+            hasn't been sync to the latest defintion
+
+            08/17/12    Rev 1.31    hmichalakeas
+            - Objects are no longer omitted if they are the source for sliceReplaceVisibility. Implemented sliceIgnore attribute
+            for things that we never want to export.
+            - Changed transparency threshold to 0.4
+
+            08/23/12    Rev 1.32    mjefferies
+            - Added support for ignore and replace attributes during export
+            - Made deleteNamespace more robust by adding child reference and child namespace removal
+            - Added locking of transforms when importing cache objects
+
+            08/28/12    Rev 1.33    mjefferies
+            - Bug fix for AnimSlicesIncludeObjectInExport
+
+            08/29/12    Rev 1.34    mjefferies
+            - Added check for protected visibility in the AnimSlicesForceAllCaches proc
+
+            08/29/12    Rev 1.35    mjefferies
+            - Check for camera type before calling isMasterCam
+
+            08/30/12    Rev 1.36    mjefferies
+            - Added backing up of structure file to versions directory
+
+            09/04/12    Rev 1.37    mjefferies
+            - When updating the structure file, get seq and shot ids, and frame range from insight if possible.
+
+            09/05/12    Rev 1.38    mjefferies
+            - Changed transparency threshold back to 0.0, since the gpu mesh cache now supports transparency
+
+            09/06/12	Rev 1.39	hmichalakeas
+            - In AnimSlicesMakeFiles, when creating the camera slice, apply external stereo overrides, and ensure the stereo camera is unlocked.
+
+            09/06/12    Rev 1.40    hmichalakeas
+            - Added some handling in AnimSlicesDeleteCachedRigs to deal with the possibility of a guest and rig both existing.
+
+            09/07/12    Rev 1.41    mjefferies
+            - Added some robustness to updateCacheAttr when getting the cache file timestamp
+
+            09/18/12    Rev 1.42    mjefferies
+            - Added call to get the master cameras and their slices from the structure file
+
+            09/24/12    Rev 1.43    mjefferies
+            - Added call to switch any caches pointing at files that don't exist to switch to the latest file
+            so that guest caches set to local won't disappear when opened by a different user.
+
+            09/25/12    Rev 1.44    mjefferies
+            - Now locking stereoCam in non camera slices, also added calls to lock and unlock the camera before
+            making slice sync modifications
+
+            09/26/12    Rev 1.45    mjefferies
+            - Adding -options "v=0" to file save during making slice files function
+
+            09/26/12    Rev 1.46    mjefferies
+            - Removing stereoCam lock, since it was causing some problems where
+            the camera wasn't showing up, even though the reference editor says it is loaded
+
+            09/26/12    Rev 1.47    mjefferies
+            - Added -dp to namespaceInfo -lod call to handle the case of nodes with the same name
+
+            09/28/12    Rev 1.48    mjefferies
+            - Improve performance of AnimSlicesMakeFiles by only loading references that are in the slice
+            - Added setting the sequence and shot fileInfo's since it no longer happens in PreAnimation.mel
+            when in slices mode
+
+            10/02/12    Rev 1.49    mjefferies
+            - Switched loadCameras to work with assetListFromMa rather than the call to get refnodes in slices
+            since that leaves out non-master cameras
+
+            10/02/12    Rev 1.50    mjefferies
+            - Added a clean reference sweep just before removing references to stop a crash when saving the maya file
+
+            10/08/12    Rev 1.51    mjefferies
+            - Needed to handle the possibility of non-unique reference node names between two different slices
+
+            10/12/12    Rev 1.52    mjefferies
+            - Fix for transferring assets check in the slice that the set prop originated in.  The prop wasn't being
+            properly removed.
+
+            10/16/12    Rev 1.53    mjefferies
+            - When render res is set to low, export the geometry rather than the pointCacheGeo, since most of that
+            geometry will not be visible
+
+            10/22/12    Rev 1.54    mjefferies
+            - Added checks for duplicate namespaces in the structure file and some other robustness
+
+            10/23/12    Rev 1.55    mjefferies
+            - Added global var to skip sync cache if set
+
+            11/09/12    Rev 1.56    mjefferies
+            - Added proc AnimSlicesGetCacheFilenames to return the cache files used by a particular slice
+
+            11/15/12    Rev 1.57    mjefferies
+            - Added proc AnimSlicesSetHQGraphicsAllCaches to turn on/off HQ Graphics on cache nodes
+
+            11/15/12    Rev 1.58    mjefferies
+            - Add check for to only allow updating of structure file from DFW and LAX
+
+            11/19/12    Rev 1.59    mjefferies
+            - Fix for bug on windows when getting timestamp of file
+
+            11/19/12    Rev 1.60    mjefferies
+            - Update for change in makeXML proc parameters
+
+            11/20/12    Rev 1.61    mjefferies
+            - Removing control cache from list of cache files to return when building the manifest
+
+            11/20/12    Rev 1.62    mjefferies
+            - Ignore invalid assets when updating structure file
+
+            11/27/12    Rev 1.63    mjefferies
+            - Export cache changed so that character assets do not export normals, in order to trim cache file size
+
+            11/27/12    Rev 1.64    mjefferies
+            - Fixed some bugs associated with updating the structure file.  Also added a check to structure file
+            generation so that it will only write out a new file if the contents have been modified.
+
+            11/29/12    Rev 1.65    mjefferies
+            - Allow AnimSlicesReserveNamespace to work remotely through the pipeline webservices interface
+
+            11/29/12    Rev 1.66    mjefferies
+            - For remote animators AnimSlicesReserveNamespace will prefix the slice for now.  Once the pipeline
+            webservice interface is accesible, this behavior can be switched off.
+
+            12/04/12    Rev 1.67	hmichalakeas
+            - When adding cache, check for double namespaces, and just skip it for now with a warning.
+            - If there is no stereoCam, add one, and take some basic measures to clean up the namespace if it exists before adding.
+
+            12/07/12	Rev 1.68	hmichalakeas
+            - Made getUpdatedStructureFileXml and backupStructureFile global
+
+            12/07/12	Rev 1.69	hmichalakeas
+            - Tweaked AnimSlicesReserveNamespace to consider all in-use namespaces as verbotten, rather than just those
+            that start with the passed argument. This allows a proposed namespace to be passed which already includes a numeric
+            suffix.
+
+            12/09/12	Rev 1.70	hmichalakeas
+            - In AnimSlicesSyncCaches, added a check for existence of the cache before adding.
+            - In getCurrentNamespaceSlicesFromGroups, added handling for the possibility of a guest in the same namespace as a rig
+            - In AnimSlicesSyncCaches, added handling for the possibility of a guest in the same namespace as a rig, where the conflict
+            has since been removed in the other slice (we delete the master node of the guest, but not the whole namespace since it
+            contains the rig)
+            - In AnimSlicesSyncCaches, fixed a quirk that caused the set assembly props to be removed, and then added back in
+            - Added AnimSlicesGetSlicesFromStructureFileWithDuplicates, which does the same as  AnimSlicesGetSlicesFromStructureFile,
+            except duplicate namespaces are returned.
+            - In importSetAssembly, checked for existence of set namespace before creating
+            - Lock slice groups after creation to prevent inadvertant deleting or renaming
+
+            12/10/12	Rev 1.71	hmichalakeas
+            - Added handling for cases where a guest stereoCam is unloaded at time of sync.
+
+            12/11/12	Rev 1.72	hmichalakeas
+            - Fixed bug in checking for unloaded stereoCam (importCache)
+
+            01/03/12	Rev 1.73	hmichalakeas
+            - In AnimSlicesSyncCaches, if a guest is parented to the world, then parent to the correct slice group
+
+            01/10/13    Rev 1.74    mjefferies
+            - Added support for set assembly color overrides
+
+            01/18/13    Rev 1.75    mjefferies
+            - Bug fix for handling multiple nodes named <namespace>:master which can happen when a control is loaded with that name
+
+            01/21/13    Rev 1.76    mjefferies
+            - Bug fix for parsing set assembly xml files and added support for set assembly visibles overrides.
+
+            01/24/13    Rev 1.77    mjefferies
+            - Added AnimSlicesBuildShotFromCaches function in order to support the Set Assembly Manager shot usage preview tool
+
+            01/24/13    Rev 1.78    mjefferies
+            - Bug fix for missing prepending the current namespace to the transform in importCache
+
+            01/24/13    Rev 1.79    mjefferies
+            - Added ability to AnimSlicesBuildShotFromCaches so that it will only load from the given slices
+            
+            01/25/13    Rev 1.80    jkiser
+            - Added audio switch for animation slices so that they now receive dialog audio.
+
+            01/28/13    Rev 1.81    mjefferies
+            - Switched includeSlices to includeNamespaces for AnimSlicesBuildShotFromCaches so that
+              you can do a cam only build when the shot is still in layout.
+
+            01/31/13    Rev 1.82    mjefferies
+            - Made updateSetAssemblyVisibility more robust
+
+            02/01/13    Rev 1.83    mjefferies
+            - Added code to remove master nodes with no namespace in the slice groups and adding a check to importCache
+              to make sure we have a namespace before importing
+
+            02/06/13    Rev 1.84    mjefferies
+            - Fixes for AnimSlicesBuildShotFromCaches for when a set goes missing and when building a shot still in layout
+
+            02/08/13    Rev 1.85    mjefferies
+            - Add support for master attributes in set assembly
+            
+            02/22/13	Rev 1.86	hmichalakeas
+            - In AnimSlicesMakeFiles, added a call to preAnimationCustomActions if it exists. This is a custom actions script for very project
+            or asset specific things we wish to do at this stage.
+
+            02/28/13    Rev 1.87    mjefferies
+            - Add call to load timeQuery plugin for the systemTime function
+
+            03/01/13    Rev 1.88    mjefferies
+            - Make getCurrentAlembicCacheNamespaces not return empty namespaces
+
+            03/05/13    Rev 1.89    mjefferies
+            - Added processing to AnimSlicesDeleteCachedRigs to handle deleting non-gpu mesh caches
+
+            03/05/13    Rev 1.90    mjefferies
+            - Added a global to turn off syncing set assembly when syncing caches
+
+            03/07/13    Rev 1.91    mjefferies
+            - Redid set assembly sync so that it uses instances of the mesh gpu cache to cut down on memory usage
+
+            03/08/13    Rev 1.92    mjefferies
+            - Added proc AnimSlicesSetGpuCacheDisplay to turn on/off the drawing of gpu caches
+
+            03/08/13    Rev 1.93    mjefferies
+            - Bug fix to handle duplicate named set assembly props
+            
+            03/14/13    Rev 1.94    mjefferies
+            - Changed AnimSlicesUpdateStructureFromCurrent to make sure it only adds namespaces and does not remove them.
+
+            03/20/13    Rev 1.95    mjefferies
+            - Changed AnimSlicesIncludeObjectInExport to send the shape node into isVisible2 rather than the transform
+            
+            03/24/13	Rev 1.96	hmichalakeas
+            - Added proc AnimSlicesGetSliceExportGeom to return point cache geo plus visible proxy geo not represented in point cache geo.
+            - Switched AnimSlicesExportCache to use this proc
+
+            03/27/13    Rev 1.97    mjefferies
+            - Added a function to delete all references not in the structure file.  This is done when making files for slices
+              on all but the first slice so that we don't get duplicates in the different slices.
+
+            03/28/13    Rev 1.98    mjefferies
+            - When removing refs from other slices, skip the ref if it doesn't exist
+
+            03/28/13    Rev 1.99    mjefferies
+            - made includeObjectInExport a global proc named AnimSlicesIncludeObjectInExport
+
+            03/28/13    Rev 1.100   mjefferies
+            - Fixes to AnimSlicesGetSliceExportGeom to handle proxy geo
+
+            04/01/13    Rev 1.101   mjefferies
+            - Bug fix for the SetAssemblyHelper - needed to apply the worldMatrix xform before processing children so that the children's
+              transforms wouldn't be undone by the parent trsnforms.
+
+            04/03/13    Rev 1.102   mjefferies
+            - Bug fix for when a _Set_Proxy_Items_ has been made from an alembic cache, so that it won't be included in the instancing code
+
+            04/08/13    Rev 1.103   mjefferies
+            - Added some robustness to the instancing.
+
+            04/09/13    Rev 1.104   mjefferies
+            - Added option to AnimSlicesBuildShotFromCaches that will load variants as quasi-previs rigs and apply the current variant settings
+
+            04/10/13    Rev 1.105   mjefferies
+            - When removing assets not in the structure file, do not remove any cameras so that the camera boom rig and the dupe cams won't get removed.
+
+            04/11/13    Rev 1.106   mjefferies
+            - Yet another fix for instancing problems - this goes back to more how it was before, with some hack code to check for cache
+              under the _Set_Proxy_Items_ group which is where the instancing problems come from
+
+            04/12/13    Rev 1.107   mjefferies
+            - Fix for a typo
+            
+            04/15/13	Rev 1.108	hmichalakeas
+            - Typo fix in convertVariantCacheToPrevis (attribute vs attributes when parsing variant settings xml)
+
+            04/30/13    Rev 1.109   mjefferies
+            - Added setting quasi-previs attributes from the channel cache when doing AnimSlicesBuildShotFromCaches.
+            
+            05/01/13	Rev 1.110   hmichalakeas
+            - Added a global variable $gSuppressDuplicateNamespaceWarning to modify the behavior of AnimSlicesGetSlicesFromXmlString (for example, when
+            using AnimSlicesGetSliceNames in batch data mining)
+            
+            05/04/13	Rev 1.111	hmichalakeas
+            - Made AnimSlicesGetSliceFromTaskName case-insensitive to account for small errors in Insight task naming
+            
+
+
+To-do's:
+        - Move to-do's to revisions as they are done
+*/
+// ---------------------------------------------------------------------------------------------------
+// source statements
+//
+
+// ---------------------------------------------------------------------------------------------------
+// global variables
+//
+global string $slicegroup_prefix = "slice_";
+global string $slicegroup_suffix = "_GRP";
+global string $PA_switchToDialogOnlyAudio;
+
+// ---------------------------------------------------------------------------------------------------
+// load all plug-ins required for this mel script
+// ---------------------------------------------------------------------------------------------------
+proc loadPlugins()
+{
+    if (!`pluginInfo -q -l "fileQuery"`)
+        loadPlugin "fileQuery";
+    if (!`pluginInfo -q -l "xml_parser"`)
+        loadPlugin "xml_parser";
+    if (!`pluginInfo -q -l "rfx_http_get"`)
+        loadPlugin "rfx_http_get";
+    if (!`pluginInfo -q -l "timeQuery"`)
+        loadPlugin "timeQuery";
+    eval ("source \"parseXML.mel\";");
+    eval ("source \"SetAssemblyUtilities.mel\";");
+    eval ("source \"attributeProtect.mel\";");
+    eval ("source \"fileIO.mel\";");
+}
+
+
+proc loadAlembicPlugin()
+{
+    if (!`pluginInfo -q -l "rfx_alembic"`)
+        loadPlugin "rfx_alembic";
+}
+
+// -------------------------------------------------------------------------------------------------
+proc unlockTransform(string $node)
+{
+    if (`objExists($node+".tx")`) {
+            setAttr -l 0 -k 0 ($node+".tx");
+            setAttr -l 0 -k 0 ($node+".ty");
+            setAttr -l 0 -k 0 ($node+".tz");
+            setAttr -l 0 -k 0 ($node+".rx");
+            setAttr -l 0 -k 0 ($node+".ry");
+            setAttr -l 0 -k 0 ($node+".rz");
+            setAttr -l 0 -k 0 ($node+".sx");
+            setAttr -l 0 -k 0 ($node+".sy");
+            setAttr -l 0 -k 0 ($node+".sz");
+    }
+}
+// -------------------------------------------------------------------------------------------------
+proc lockTransform(string $node)
+{
+    if (`objExists($node+".tx")`) {
+        setAttr -l 1 -k 0 ($node+".tx");
+        setAttr -l 1 -k 0 ($node+".ty");
+        setAttr -l 1 -k 0 ($node+".tz");
+        setAttr -l 1 -k 0 ($node+".rx");
+        setAttr -l 1 -k 0 ($node+".ry");
+        setAttr -l 1 -k 0 ($node+".rz");
+        setAttr -l 1 -k 0 ($node+".sx");
+        setAttr -l 1 -k 0 ($node+".sy");
+        setAttr -l 1 -k 0 ($node+".sz");
+    }
+}
+
+proc getAlembicCachesOfType(string $caches[], string $types[], string $name)
+{
+    clear $caches;
+    if (`pluginInfo -q -l "rfx_alembic"`) {
+        for ($t = 0; $t < size($types); $t++) {
+            string $cachesOfType[];
+            if ($name == "") {
+                $cachesOfType = `ls -type $types[$t]`;
+            }
+            else {
+                $cachesOfType = `ls -type $types[$t] $name`;
+            }
+            for ($i = 0; $i < size($cachesOfType); $i++) {
+                string $cache = $cachesOfType[$i];
+                string $cache_usage = $cache + ".usage";
+                if (!`objExists $cache_usage`) {
+                    // usage wasn't in before v1.2, so assume animslices for now
+                    $caches[size($caches)] = $cache;
+                }
+                else {
+                    string $usage = `getAttr -silent $cache_usage`;
+                    if ($usage == "") {
+                        // usage wasn't in before v1.2, so assume animslices for now
+                        $caches[size($caches)] = $cache;
+                    }
+                    else if ($usage == "animslices") {
+                        $caches[size($caches)] = $cache;
+                    }
+                }
+            }
+        }
+    }
+}
+
+proc getAlembicAssetCaches(string $caches[])
+{
+    string $types[] = {
+        "rfxAlembicMeshCache",
+        "rfxAlembicMeshGpuCache",
+        "rfxAlembicCameraCache"
+    };
+    getAlembicCachesOfType($caches, $types, "");
+}
+
+proc getAlembicAllCaches(string $caches[])
+{
+    string $types[] = {
+        "rfxAlembicMeshCache",
+        "rfxAlembicMeshGpuCache",
+        "rfxAlembicCameraCache",
+        "rfxAlembicLocatorCache"
+    };
+    getAlembicCachesOfType($caches, $types, "");
+}
+
+global proc string AnimSlicesGetSliceString(string $sl)
+{
+    if ($sl != "")
+        return "_slice_" + $sl;
+    return "";
+}
+
+global proc string AnimSlicesGetSeqShotSliceString(string $sq, string $sh, string $sl)
+{
+    return $sq + "_" + $sh + AnimSlicesGetSliceString($sl);
+}
+
+global proc string AnimSlicesGetTaskNameFromSlice(string $slice)
+{
+    return "Slice - " + $slice;
+}
+
+global proc string AnimSlicesGetSliceFromTaskName(string $taskname)
+{
+    string $result = "";
+    string $prefix = "slice - ";
+    int $sizePrefix = size($prefix);
+    if (size($taskname) > $sizePrefix &&
+            tolower(substring($taskname, 1, $sizePrefix)) == $prefix)
+    {
+        string $rest = substring($taskname, $sizePrefix + 1, size($taskname));
+        int $end = 2;
+        while ($end <= size($rest))
+        {
+            if (substring($rest, $end, $end) == " ")
+            {
+                break;
+            }
+            $end++;
+        }
+        $result = substring($rest, 1, $end - 1);
+    }
+    return $result;
+}
+// -------------------------------------------------------------------------------------------------
+// AnimSlicesGetSliceExportGeom - returns results of getPointCacheGeometry, plus any visible objects with
+// the _PRX suffix, as long as there isn't a corresponding object in the results of getPointCacheGeometry that differs
+// only by having the _REN suffix.
+// -------------------------------------------------------------------------------------------------
+global proc string[] AnimSlicesGetSliceExportGeom (string $namespace)
+{
+    string $result[] = getPointCacheGeometry ({$namespace});
+    $result = sort ($result);
+    string $filterPRXShape = "*_PRXShape";
+    if ($namespace != "") {
+        $filterPRXShape = $namespace+":"+$filterPRXShape;
+    }
+    string $shapes[] = `ls -type "nurbsSurface" -type "mesh" -ni $filterPRXShape`;
+    string $prox[];
+    for ($i=0;$i<size($shapes);$i++) {
+        string $transform[] = `listRelatives -p -pa $shapes[$i]`;
+        string $visShape = $shapes[$i];
+        if (`objExists ($transform[0]+".sliceReplaceVisibility")`) {
+            string $replace[] = `listConnections -s 1 -d 0 -sh false ($transform[0]+".sliceReplaceVisibility")`;
+            if (size($replace)) {
+                string $tmp[] = `listRelatives -s -ni -pa $replace[0]`;
+                if (size($tmp))
+                    $visShape = $tmp[0];
+            }
+        }
+        if (isVisible2($visShape, 1, 1, 0, 0, 0)) {
+
+            if (stringArrayFindIndexSorted ($transform[0],$result) == -1) {
+                string $correspondingRen = substitute ("(_PRX)",$transform[0],"_REN");
+                if (stringArrayFindIndexSorted ($correspondingRen,$result) == -1) {
+                    $prox[size($prox)] = $transform[0];
+                }
+            }
+        }
+    }
+    $result = stringArrayCatenate ($result,$prox);
+    return $result;
+}
+
+// -------------------------------------------------------------------------------------------------
+proc unlockCamera(string $cam)
+{
+    if (`referenceQuery -inr $cam`) {
+        string $refNode = `referenceQuery -referenceNode $cam`;
+        string $refFile = `referenceQuery -filename $cam`;
+        if (`getAttr($refNode+".locked")`) {
+            file -ur $refNode $refFile;
+            setAttr($refNode+".locked", false);
+            file -f -lr $refNode $refFile;
+        }
+    }
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc lockCamera(string $cam)
+{
+    if (`referenceQuery -inr $cam`) {
+        string $refNode = `referenceQuery -referenceNode $cam`;
+        string $refFile = `referenceQuery -filename $cam`;
+        if (!`getAttr($refNode+".locked")`) {
+            file -ur $refNode $refFile;
+            setAttr($refNode+".locked", true);
+            file -f -lr $refNode $refFile;
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+proc string getStructureFile(string $sequence, string $shot)
+{
+    return getPath("ShotInfoDir",{$sequence,$shot}) + "/" + $sequence + "_" + $shot + "_structure.xml";
+}
+// ---------------------------------------------------------------------------------------------------
+proc string getStructureWaitFile(string $sequence, string $shot)
+{
+    return getPath("ShotInfoDir",{$sequence,$shot}) + "/" + $sequence + "_" + $shot + "_structureUpdate.wait";
+}
+// ---------------------------------------------------------------------------------------------------
+proc int isNonMasterCamera(string $assetXML)
+{
+    int $result = 0;
+    string $assetType = xml_getVar($assetXML, "AssetType");
+    if (tolower($assetType) == "camera")
+    {
+        string $masterCam = xml_getVar($assetXML, "MasterCamera");
+        if ($masterCam == "0")
+        {
+            // this is a camera, but not a master cam
+            $result = 1;
+        }
+    }
+    return $result;
+}
+// ---------------------------------------------------------------------------------------------------
+proc int isInvalidAsset(string $assetXML)
+{
+    string $assetId = xml_getVar($assetXML, "AssetID");
+    return ($assetId == "" || $assetId == "0");
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Get the existing namespaces in the given animation slice
+// ---------------------------------------------------------------------------------------------------
+global proc int AnimSlicesGetNamespaces(string $sequence, string $shot, string $slice, string $namespaces[], int $reserved[])
+{
+    loadPlugins();
+
+    clear $namespaces;
+    clear $reserved;
+
+    string $allSliceNames[], $allNamespaces[];
+    int $namespacesInSlice[], $allReserved[];
+    AnimSlicesGetSlices($sequence, $shot, $allSliceNames, $namespacesInSlice, $allNamespaces, $allReserved);
+    int $pos = 0;
+    for ($i = 0; $i < size($allSliceNames); $i++)
+    {
+        if ($allSliceNames[$i] == $slice)
+        {
+            for ($j = 0; $j < $namespacesInSlice[$i]; $j++)
+            {
+                $namespaces[size($namespaces)] = $allNamespaces[$pos];
+                $reserved[size($reserved)] = $allReserved[$pos];
+                $pos++;
+            }
+            break;
+        }
+        $pos += $namespacesInSlice[$i];
+    }
+
+    return size($namespaces);
+}
+
+
+// -------------------------------------------------------------------------------------------------
+// Get the slices and the namespaces in the slices
+// -------------------------------------------------------------------------------------------------
+global proc int AnimSlicesGetSlices(string $sequence, string $shot,
+        string $sliceNames[], int $namespacesInSlice[], string $namespaces[], int $reserved[])
+{
+    string $strucfile = getStructureFile($sequence, $shot);
+    return AnimSlicesGetSlicesFromStructureFile(
+            $strucfile, $sliceNames, $namespacesInSlice, $namespaces, $reserved);
+}
+
+
+// -------------------------------------------------------------------------------------------------
+// Get the slices and the namespaces in the slices from a structure file
+// -------------------------------------------------------------------------------------------------
+global proc int AnimSlicesGetSlicesFromStructureFile(string $strucfile,
+        string $sliceNames[], int $namespacesInSlice[], string $namespaces[], int $reserved[])
+{
+    clear $sliceNames;
+    clear $namespacesInSlice;
+    clear $namespaces;
+
+    if (`filetest -f $strucfile`)
+    {
+        string $xml = readXML($strucfile, 0);
+        return AnimSlicesGetSlicesFromXmlString($xml, $sliceNames, $namespacesInSlice, $namespaces, $reserved);
+    }
+    else {
+        print("Structure file "+$strucfile+" is missing.\n");
+        return 0;
+    }
+}
+// -------------------------------------------------------------------------------------------------
+// Get the slices and the namespaces in the slices from a structure file
+// -------------------------------------------------------------------------------------------------
+global proc int AnimSlicesGetSlicesFromStructureFileWithDuplicates (string $strucfile,
+        string $sliceNames[], int $namespacesInSlice[], string $namespaces[], int $reserved[])
+{
+    // same as AnimSlicesGetSlicesFromStructureFile, except duplicate namespaces are returned.
+    clear $sliceNames;
+    clear $namespacesInSlice;
+    clear $namespaces;
+
+
+    if (`filetest -f $strucfile`)
+    {
+        string $xml = readXML($strucfile, 0);
+        return AnimSlicesGetSlicesFromXmlStringWithDuplicates($xml, $sliceNames, $namespacesInSlice, $namespaces, $reserved);
+    }
+    else {
+        print("Structure file "+$strucfile+" is missing.\n");
+        return 0;
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Get the slices and the namespaces in the slices from an xml string
+// -------------------------------------------------------------------------------------------------
+global proc int AnimSlicesGetSlicesFromXmlString(string $xml,
+        string $sliceNames[], int $namespacesInSlice[], string $namespaces[], int $reserved[])
+{
+    loadPlugins();
+	
+	global int $gSuppressDuplicateNamespaceWarning;
+
+    clear $sliceNames;
+    clear $namespacesInSlice;
+    clear $namespaces;
+
+    // get the namespaces from the anim slices section
+    string $animSlicesXML[] = xml_getTag($xml, "AnimSlices");
+    if (size($animSlicesXML) > 0)
+    {
+        string $sliceXML[] = xml_getTag($animSlicesXML[0], "Slice");
+        for ($s = 0; $s < size($sliceXML); $s++)
+        {
+            string $slice_name = xml_getVar($sliceXML[$s], "Name");
+            $sliceNames[size($sliceNames)] = $slice_name;
+            string $namespaceXML[] = xml_getTag($sliceXML[$s], "Namespace");
+            int $count = 0;
+            for ($i = 0; $i < size($namespaceXML); $i++)
+            {
+                string $namespace = xml_getVar($namespaceXML[$i], "Name");
+                if (stringArrayContains($namespace, $namespaces) && !$gSuppressDuplicateNamespaceWarning) {
+                    print("WARNING: Duplicate namespace detected in the structure file: " + $namespace + "\n");
+                }
+                else {
+                    $namespaces[size($namespaces)] = $namespace;
+                    $reserved[size($reserved)] = 1; // default to reserved
+                    $count++;
+                }
+            }
+            $namespacesInSlice[size($namespacesInSlice)] = $count;
+        }
+    }
+
+    // determine the actual value of the reserved field, and add any additional
+    // namespaces that weren't already listed from the assets section
+    int $numAdded = 0;
+    string $assetXML[] = xml_getTag($xml, "Asset");
+    for ($i = 0; $i < size($assetXML); $i++)
+    {
+        if (isNonMasterCamera($assetXML[$i])) continue;
+        if (isInvalidAsset($assetXML[$i])) continue;
+
+        string $ns = xml_getVar($assetXML[$i], "Namespace");
+        int $index = stringArrayFindIndex($ns, $namespaces);
+        if ($index >= 0)
+        {
+            $reserved[$index] = 0;
+        }
+        else
+        {
+            $namespaces[size($namespaces)] = $ns;
+            $reserved[size($reserved)] = 0;
+            $numAdded++;
+        }
+    }
+    if ($numAdded > 0)
+    {
+        $sliceNames[size($sliceNames)] = "";
+        $namespacesInSlice[size($namespacesInSlice)] = $numAdded;
+    }
+
+    return size($namespaces);
+}
+// -------------------------------------------------------------------------------------------------
+// Get the slices and the namespaces in the slices from an xml string. This is the same AnimSlicesGetSlicesFromXmlString,
+// except duplicate namespaces are returned
+// -------------------------------------------------------------------------------------------------
+global proc int AnimSlicesGetSlicesFromXmlStringWithDuplicates(string $xml,
+        string $sliceNames[], int $namespacesInSlice[], string $namespaces[], int $reserved[])
+{
+    loadPlugins();
+
+    clear $sliceNames;
+    clear $namespacesInSlice;
+    clear $namespaces;
+
+    // get the namespaces from the anim slices section
+    string $animSlicesXML[] = xml_getTag($xml, "AnimSlices");
+    if (size($animSlicesXML) > 0)
+    {
+        string $sliceXML[] = xml_getTag($animSlicesXML[0], "Slice");
+        for ($s = 0; $s < size($sliceXML); $s++)
+        {
+            string $slice_name = xml_getVar($sliceXML[$s], "Name");
+            $sliceNames[size($sliceNames)] = $slice_name;
+            string $namespaceXML[] = xml_getTag($sliceXML[$s], "Namespace");
+            int $count = 0;
+            for ($i = 0; $i < size($namespaceXML); $i++)
+            {
+                string $namespace = xml_getVar($namespaceXML[$i], "Name");
+                $namespaces[size($namespaces)] = $namespace;
+                $reserved[size($reserved)] = 1; // default to reserved
+                $count++;
+            }
+            $namespacesInSlice[size($namespacesInSlice)] = $count;
+        }
+    }
+
+    // determine the actual value of the reserved field, and add any additional
+    // namespaces that weren't already listed from the assets section
+    int $numAdded = 0;
+    string $assetXML[] = xml_getTag($xml, "Asset");
+    for ($i = 0; $i < size($assetXML); $i++)
+    {
+        if (isNonMasterCamera($assetXML[$i])) continue;
+        if (isInvalidAsset($assetXML[$i])) continue;
+
+        string $ns = xml_getVar($assetXML[$i], "Namespace");
+        int $index = stringArrayFindIndex($ns, $namespaces);
+        if ($index >= 0)
+        {
+            $reserved[$index] = 0;
+        }
+        else
+        {
+            $namespaces[size($namespaces)] = $ns;
+            $reserved[size($reserved)] = 0;
+            $numAdded++;
+        }
+    }
+    if ($numAdded > 0)
+    {
+        $sliceNames[size($sliceNames)] = "";
+        $namespacesInSlice[size($namespacesInSlice)] = $numAdded;
+    }
+
+    return size($namespaces);
+}
+
+
+// -------------------------------------------------------------------------------------------------
+// Get the slices and the namespaces in the slices
+// -------------------------------------------------------------------------------------------------
+global proc AnimSlicesGetSliceNames(string $sequence, string $shot, string $slices[])
+{
+    loadPlugins();
+
+    string $sliceNames[];
+    int $namespacesInSlice[];
+    string $namespaces[];
+    int $reserved[];
+    AnimSlicesGetSlices($sequence, $shot, $sliceNames, $namespacesInSlice, $namespaces, $reserved);
+
+    // copy over slice names except for empty string
+    clear $slices;
+    for ($i = 0; $i < size($sliceNames); $i++)
+    {
+        if ($sliceNames[$i] != "")
+        {
+            $slices[size($slices)] = $sliceNames[$i];
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Get the asset list including slice information for the given sequence and shot
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesAssetListFromStructureFile(string $sequence, string $shot,
+        string $namespaces[], string $assetTypes[], string $assetNames[],
+        string $refNodes[], string $cachefiles[], string $slices[], string $sliceNames[])
+{
+    loadPlugins();
+
+    clear $namespaces;
+    clear $assetTypes;
+    clear $assetNames;
+    clear $refNodes;
+    clear $cachefiles;
+    clear $slices;
+    clear $sliceNames;
+
+    string $cachebase, $cachefile;
+
+    string $strucfile = getStructureFile($sequence, $shot);
+    if (`filetest -f $strucfile`)
+    {
+        string $sets[], $props[];
+        int $propsPerSet[];
+        SetAssemblyUtilities.getSetsAndPropsFromStructureFile($strucfile, $sets, $propsPerSet, $props, {});
+
+        string $xml = readXML($strucfile, 0);
+        string $assetXML[] = xml_getTag($xml, "Asset");
+        for ($i = 0; $i < size($assetXML); $i++)
+        {
+            if (isNonMasterCamera($assetXML[$i])) continue;
+            if (isInvalidAsset($assetXML[$i])) continue;
+
+            string $ns = xml_getVar($assetXML[$i], "Namespace");
+            if (stringArrayContains($ns, $namespaces)) {
+                print("WARNING: Duplicate namespace detected in the structure file: " + $ns + "\n");
+                continue;
+            }
+
+            int $index = size($namespaces);
+            $namespaces[$index] = $ns;
+            $refNodes[$index] = xml_getVar($assetXML[$i], "RefNode");
+            $assetTypes[$index] = xml_getVar($assetXML[$i], "AssetType");
+            $assetTypes[$index] = tolower($assetTypes[$index]);
+            $assetNames[$index] = xml_getVar($assetXML[$i], "Name");
+
+            $cachebase = getPath("AnimSlicesCacheDir", {$sequence, $shot, $ns});
+            if (stringArrayContains($ns, $sets)) {
+                $cachefile = $cachebase + "/latest/" + $ns + "_assembly.xml";
+            }
+            else if (stringArrayContains($ns, $props)) {
+                $cachefile = getPath("AssetAbcLiveCache", {$assetTypes[$index], $assetNames[$index]});
+            }
+            else {
+                $cachefile = $cachebase + "/latest/" + $ns + ".abc";
+            }
+
+            $cachefiles[$index] = $cachefile;
+
+            $slices[$index] = "";
+        }
+
+        string $sliceXML[] = xml_getTag($xml, "Slice");
+        for ($i = 0; $i < size($sliceXML); $i++)
+        {
+            string $slice_name = xml_getVar($sliceXML[$i], "Name");
+            $sliceNames[$i] = $slice_name;
+            string $namespaceXML[] = xml_getTag($sliceXML[$i], "Namespace");
+            for ($j = 0; $j < size($namespaceXML); $j++)
+            {
+                string $ns = xml_getVar($namespaceXML[$j], "Name");
+                int $index = stringArrayFindIndex($ns, $namespaces);
+                if ($index >= 0)
+                {
+                    $slices[$index] = $slice_name;
+                }
+            }
+        }
+    }
+    else {
+        print("Structure file "+$strucfile+" is missing.\n");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Get the master cameras and slice information for the given sequence and shot
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesGetMasterCameras(string $sequence, string $shot, string $namespaces[], string $slices[])
+{
+    loadPlugins();
+
+    clear $namespaces;
+    clear $slices;
+
+    string $assetType, $assetName;
+
+    string $strucfile = getStructureFile($sequence, $shot);
+    if (`filetest -f $strucfile`)
+    {
+        string $xml = readXML($strucfile, 0);
+        string $assetXML[] = xml_getTag($xml, "Asset");
+        for ($i = 0; $i < size($assetXML); $i++)
+        {
+            $assetType = xml_getVar($assetXML[$i], "AssetType");
+            if (tolower($assetType) == "camera") {
+                if (isNonMasterCamera($assetXML[$i])) continue;
+
+                int $index = size($namespaces);
+                string $ns = xml_getVar($assetXML[$i], "Namespace");
+                $namespaces[$index] = $ns;
+                $slices[$index] = "";
+            }
+        }
+
+        string $sliceXML[] = xml_getTag($xml, "Slice");
+        for ($i = 0; $i < size($sliceXML); $i++)
+        {
+            string $slice_name = xml_getVar($sliceXML[$i], "Name");
+            string $namespaceXML[] = xml_getTag($sliceXML[$i], "Namespace");
+            for ($j = 0; $j < size($namespaceXML); $j++)
+            {
+                string $ns = xml_getVar($namespaceXML[$j], "Name");
+                int $index = stringArrayFindIndex($ns, $namespaces);
+                if ($index >= 0)
+                {
+                    $slices[$index] = $slice_name;
+                }
+            }
+        }
+    }
+    else {
+        print("Structure file "+$strucfile+" is missing.\n");
+    }
+}
+
+// -----------------------------------------------------------------------------------------------
+proc string removeCopyNumber (string $path)
+{
+    string $buf[];
+    tokenize ($path,"{}",$buf);
+    return $buf[0];
+}
+
+proc int isMasterCam (string $name)
+{
+    string $masterNode[] = findAssets ({$name},{"camera"});
+    if (!size($masterNode)) {
+        // the asset isn't loaded so just base it off the name
+        if ($name == "stereoCam")
+            return 1;
+        else
+            return 0;
+    }
+
+    if (!`objExists ($masterNode[0]+".masterCamera")`)
+        return 1;
+
+    return `getAttr ($masterNode[0]+".masterCamera")`;
+}
+
+// ---------------------------------------------------------------------------------------------------
+global proc backupStructureFile(string $strucfile)
+{
+    if (`filetest -f $strucfile`) {
+        // backup the given structure file to the versions dir
+        int $vers = 1 + int(getVersion("FromFilenameGeneric", {$strucfile}));
+        string $versStr = padNumber($vers,4);
+        string $dir = dirname($strucfile) + "/versions";
+        string $name = basename($strucfile, ".xml");
+        string $backupFilename = $dir + "/" + $name + "." + $versStr + ".xml";
+        if (!`filetest -d $dir`) {
+            sysFile -md $dir;
+        }
+        sysFile -cp $backupFilename $strucfile;
+    }
+}
+
+
+proc string updateValue(string $newValue, string $oldValue, int $diff[])
+{
+    if ($newValue != $oldValue) {
+        $diff[0] = true;
+    }
+    return $newValue;
+}
+
+// ---------------------------------------------------------------------------------------------------
+global proc string getUpdatedStructureFileXml(string $strucfile, string $sequence, string $shot, string $slice,
+        string $updatedNamespaces[], string $updatedRefNodes[], int $updatedDeferred[], string $updatedAssets[],
+        string $addNamespaces[], string $addRefNodes[], int $addDeferred[], string $addAssets[],
+        string $removeNamespaces[], string $transferNamespaces[], string $actionString, int $modified[])
+{
+    loadPlugins();
+
+    $modified[0] = false;
+    string $result = "";
+
+    if (`filetest -f $strucfile`)
+    {
+        string $nsRemovedFromAssets[];
+
+        string $xml = readXML($strucfile, 0);
+        string $shotGroup[] = xml_getTag($xml,"ShotGroup");
+        if (size($shotGroup) == 0) {
+            // invalid structure file if there is no shot group
+            return "";
+        }
+
+        // get seq and shot ids, and frame range start and end from insight, if possible
+        string $sequenceId = xml_getVar($shotGroup[0], "SequenceID");
+        string $shotGroupId = xml_getVar($shotGroup[0], "ShotGroupID");
+        string $frameRangeStart = xml_getVar($shotGroup[0], "FrameRangeStart");
+        string $frameRangeEnd = xml_getVar($shotGroup[0], "FrameRangeEnd");
+
+        string $insight_xml = insightGetShotXML($sequence, $shot);
+        string $insight_shotGroup[] = xml_getTag($insight_xml, "ShotGroup");
+        if (size($insight_shotGroup) > 0) {
+            $sequenceId = updateValue(xml_getVar($insight_shotGroup[0], "SequenceID"), $sequenceId, $modified);
+            $shotGroupId = updateValue(xml_getVar($insight_shotGroup[0], "ShotGroupID"), $shotGroupId, $modified);
+            $frameRangeStart = updateValue(xml_getVar($insight_shotGroup[0], "FrameRangeStart"), $frameRangeStart, $modified);
+            $frameRangeEnd = updateValue(xml_getVar($insight_shotGroup[0], "FrameRangeEnd"), $frameRangeEnd, $modified);
+        }
+
+        $result = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+        if (size($shotGroup) > 0) {
+            $result += "<ShotGroup ";
+            $result += "GroupName=\""+$shot+"\" ";
+            $result += "SequenceID=\""+$sequenceId+"\" ";
+            $result += "ShotGroupID=\""+$shotGroupId+"\" ";
+            $result += "FrameRangeStart=\""+$frameRangeStart+"\" ";
+            $result += "FrameRangeEnd=\""+$frameRangeEnd+"\" ";
+            $result += ">\n";
+        }
+
+        $result += "\t<UpdateInfo ";
+        $result += "Script=\"AnimSlicesUtilities.mel\" ";
+        $result += "Action=\"" + $actionString + "\" ";
+        string $curFilename = `file -q -exn`;
+        if ($curFilename != "") {
+            $result += "Filename=\"" + $curFilename + "\" ";
+        }
+        $result += " />\n";
+
+        // backward compatibility
+        $result += "\t<Shots>\n";
+        $result += "\t\t<Shot ";
+        $result += "ShotID=\""+$shotGroupId+"\" ";
+        $result += "ShotNumber=\""+$shot+"\" ";
+        $result += "SequenceID=\""+$sequenceId+"\" ";
+        $result += "FrameRangeStart=\""+$frameRangeStart+"\" ";
+        $result += "FrameRangeEnd=\""+$frameRangeEnd+"\" ";
+        $result += " />\n";
+        $result += "\t</Shots>\n";
+
+        // transfer assets not marked for removal
+        string $asset[] = xml_getTag($xml, "Asset");
+        $result += "\t<Assets>\n";
+        for ($i=0;$i<size($asset);$i++)
+        {
+            string $namespace = xml_getVar($asset[$i],"Namespace");
+            if (stringArrayContains($namespace, $removeNamespaces)) {
+                // skip the asset, it is marked for removal
+                $nsRemovedFromAssets[size($nsRemovedFromAssets)] = $namespace;
+                $modified[0] = true;
+                continue;
+            }
+
+            string $assetId = xml_getVar($asset[$i],"AssetID");
+            string $name = xml_getVar($asset[$i], "Name");
+            string $folderName = xml_getVar($asset[$i], "FolderName");
+            string $path = xml_getVar($asset[$i], "Path");
+            string $version = xml_getVar($asset[$i], "Version");
+            string $assetType = xml_getVar($asset[$i], "AssetType");
+            string $assetTypeId = xml_getVar($asset[$i], "AssetTypeID");
+            string $namespace = xml_getVar($asset[$i], "Namespace");
+            string $refNode = xml_getVar($asset[$i], "RefNode");
+            string $omitted = xml_getVar($asset[$i], "Omitted");
+            string $phase = xml_getVar($asset[$i], "Phase");
+            string $masterCamera = xml_getVar($asset[$i], "MasterCamera");
+
+            int $index = stringArrayFindIndex($namespace, $updatedNamespaces);
+            if ($index >= 0) {
+                string $filename = removeCopyNumber($updatedAssets[$index]);
+                string $dir = dirname($filename);
+
+                string $new_name = getPath("AssetNameFromFilename", {$filename});
+                if ($name != $new_name) {
+                    $modified[0] = true;
+                    $name = $new_name;
+                    $folderName = $new_name;
+
+                    string $asset_xml = insightGetAssetXML($name);
+                    $assetId = xml_getVar($asset_xml, "AssetID");
+                    $assetTypeId = xml_getVar($asset_xml, "AssetTypeID");
+                    if ($assetId == "") {
+                        $nsRemovedFromAssets[size($nsRemovedFromAssets)] = $namespace;
+                        continue;
+                    }
+                    $assetType = capitalizeString(assetTypeFromID(int($assetTypeId)));
+                }
+
+                $path = updateValue(getPath("InsightPath", {$dir}), $path, $modified);
+                $version = updateValue(getVersion("FromFilenameLive", {$filename}), $version, $modified);
+                $refNode = updateValue($updatedRefNodes[$index], $refNode, $modified);
+                $omitted = updateValue(string($updatedDeferred[$index]), $omitted, $modified);
+                $phase = updateValue(getPath("AssetComponentFromFilename", {$filename}), $phase, $modified);
+            }
+
+            $result += "\t\t<Asset ";
+            $result += "AssetID=\"" + $assetId + "\" ";
+            $result += "Name=\"" + $name + "\" ";
+            $result += "FolderName=\"" + $folderName + "\" ";
+            $result += "Path=\"" + $path + "\" ";
+            $result += "Version=\"" + $version + "\" ";
+            $result += "AssetType=\"" + $assetType + "\" ";
+            $result += "AssetTypeID=\"" + $assetTypeId + "\" ";
+            $result += "Namespace=\"" + $namespace + "\" ";
+            $result += "RefNode=\"" + $refNode + "\" ";
+            $result += "Omitted=\"" + $omitted + "\" ";
+            $result += "Phase=\"" + $phase + "\" ";
+            if ($masterCamera != "") $result += "MasterCamera=\"" + $masterCamera + "\" ";
+            $result += " />\n";
+        }
+
+        // add the given namespaces here if asset is not ""
+        for ($i = 0; $i < size($addNamespaces); $i++)
+        {
+            if ($addAssets[$i] == "") {
+                // skip the asset, the namespace is just being reserved
+                continue;
+            }
+
+            string $filename = removeCopyNumber($addAssets[$i]);
+
+            // name
+            string $name = getPath("AssetNameFromFilename",{$filename});
+
+            // phase
+            string $phase = getPath("AssetComponentFromFilename",{$filename});
+
+            // get assetID and assetTypeID
+            string $asset_xml = insightGetAssetXML($name);
+            string $assetId = xml_getVar($asset_xml, "AssetID");
+            string $assetTypeId = xml_getVar($asset_xml, "AssetTypeID");
+            if ($assetId == "") {
+                $nsRemovedFromAssets[size($nsRemovedFromAssets)] = $addNamespaces[$i];
+                continue;
+            }
+
+            // look up assetType
+            string $assetType = capitalizeString(assetTypeFromID($assetTypeId));
+
+            // get current latest version number
+            string $version = getVersion("FromFilenameLive",{$filename});
+
+            // path - convert this to Insight UNC path
+            string $dir = dirname($filename);
+            string $path = getPath ("InsightPath",{$dir});
+
+            $result += "\t\t<Asset ";
+            $result += "AssetID=\""+$assetId+"\" ";
+            $result += "Name=\""+$name+"\" ";
+            $result += "FolderName=\""+$name+"\" ";
+            $result += "Path=\""+$path+"\" ";
+            $result += "Version=\""+$version+"\" ";
+            $result += "AssetType=\""+$assetType+"\" ";
+            $result += "AssetTypeID=\""+$assetTypeId+"\" ";
+            $result += "Namespace=\""+$addNamespaces[$i]+"\" ";
+            $result += "RefNode=\""+$addRefNodes[$i]+"\" ";
+            $result += "Omitted=\""+$addDeferred[$i]+"\" ";
+            if ($phase != "") $result += "Phase=\""+$phase+"\" ";
+            if (tolower ($assetType) == "camera") {
+                int $masterCam = isMasterCam($name);
+                $xml += "MasterCamera=\""+$masterCam+"\" ";
+            }
+            $result += " />\n";
+            $modified[0] = true;
+        }
+        $result += "\t</Assets>\n";
+
+        string $camera[] = xml_getTag($xml, "Camera");
+        $result += "\t<Cameras>\n";
+        for ($i=0;$i<size($camera);$i++)
+        {
+            $result += "\t\t<Camera ";
+            $result += "Name=\""+xml_getVar($camera[$i],"Name")+"\" ";
+            $result += "ShapeName=\""+xml_getVar($camera[$i],"ShapeName")+"\" ";
+            $result += "Index=\""+xml_getVar($camera[$i],"Index")+"\" ";
+            int $bgPlate = xml_getVar($camera[$i],"BgPlate");
+            $result += "BgPlate=\""+$bgPlate+"\" ";
+            if ($bgPlate)
+            {
+                $result += "imageName=\""+xml_getVar($camera[$i],"imageName")+"\" ";
+                $result += "sizeX=\""+xml_getVar($camera[$i],"sizeX")+"\" ";
+                $result += "sizeY=\""+xml_getVar($camera[$i],"sizeY")+"\" ";
+                $result += "offsetX=\""+xml_getVar($camera[$i],"offsetX")+"\" ";
+                $result += "offsetY=\""+xml_getVar($camera[$i],"offsetY")+"\" ";
+                $result += "depth=\""+xml_getVar($camera[$i],"depth")+"\" ";
+                $result += "rotate=\""+xml_getVar($camera[$i],"rotate")+"\" ";
+            }
+            $result += "/>\n";
+
+        }
+        $result += "\t</Cameras>\n";
+
+        string $slices[] = xml_getTag($xml, "Slice");
+        if (size($slices) > 0 || size($addNamespaces) > 0)
+        {
+            $result += "\t<AnimSlices>\n";
+            for ($i = 0; $i < size($slices); $i++)
+            {
+                string $slice_name = xml_getVar($slices[$i],"Name");
+                $result += "\t\t<Slice Name=\""+ $slice_name +"\">\n";
+
+                string $namespaces[] = xml_getTag($slices[$i], "Namespace");
+                for ($j = 0; $j < size($namespaces); $j++)
+                {
+                    string $name = xml_getVar($namespaces[$j],"Name");
+                    if ($slice == $slice_name &&
+                            (stringArrayContains($name, $nsRemovedFromAssets) ||
+                            stringArrayContains($name, $addNamespaces))) {
+                        // skip the namespace, it was removed from the asset section or will be added later
+                        $modified[0] = true;
+                        continue;
+                    }
+
+                    if ($slice != $slice_name && stringArrayContains($name, $transferNamespaces)) {
+                        $modified[0] = true;
+                        $result += "\t\t\t<Transferred Name=\""+$name+"\" Slice=\""+$slice+"\" />\n";
+                    }
+                    else {
+                        $result += "\t\t\t<Namespace Name=\""+$name+"\" />\n";
+                    }
+                }
+
+                string $transferred[] = xml_getTag($slices[$i], "Transferred");
+                for ($j = 0; $j < size($transferred); $j++)
+                {
+                    string $name = xml_getVar($transferred[$j],"Name");
+                    string $to_slice = xml_getVar($transferred[$j],"Slice");
+                    $result += "\t\t\t<Transferred Name=\""+$name+"\" Slice=\""+$to_slice+"\" />\n";
+                }
+
+                if ($slice == $slice_name)
+                {
+                    for ($j = 0; $j < size($addNamespaces); $j++)
+                    {
+                        if (stringArrayContains($addNamespaces[$j], $nsRemovedFromAssets)) {
+                            continue;
+                        }
+
+                        $modified[0] = true;
+                        $result += "\t\t\t<Namespace Name=\""+$addNamespaces[$j]+"\" />\n";
+                    }
+                }
+
+                $result += "\t\t\</Slice>\n";
+            }
+            $result += "\t</AnimSlices>\n";
+        }
+
+        $result += "</ShotGroup>\n";
+    }
+    else {
+        print("Structure file "+$strucfile+" is missing.\n");
+    }
+
+    return $result;
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+proc doUpdateStructure(string $sequence, string $shot, string $slice, string $okayToAdd[],
+        string $namespaces[], string $refNodes[], int $deferred[], string $assets[])
+{
+    loadPlugins();
+
+    string $location = getPhysicalLocation();
+    if ($location != "DFW" && $location != "LAX") {
+        print("ERROR: Attempted to update the structure file from location '" + $location + "' which is not allowed\n");
+        return;
+    }
+
+    string $newxml;
+    string $strucfile = getStructureFile($sequence, $shot);
+    string $waitFile = getStructureWaitFile($sequence, $shot);
+    float $timeout = 60;
+    float $retryInterval = 5;
+    // wait for the file...if it is in use, it will wait until it isn't, or it times out, whichever happens sooner
+    waitForFile($strucfile, $waitFile, $timeout, $retryInterval);
+    int $fileID = fopen($waitFile, "w");
+    fclose ($fileID);
+
+    // get the current info for this slice
+    string $curNamespaces[];
+    int $curReserved[];
+    AnimSlicesGetNamespaces($sequence, $shot, $slice, $curNamespaces, $curReserved);
+
+    // find which namespaces have been removed
+    string $removeNamespaces[];
+    for ($i = 0; $i < size($curNamespaces); $i++)
+    {
+        if (!stringArrayContains($curNamespaces[$i], $namespaces))
+        {
+            $removeNamespaces[size($removeNamespaces)] = $curNamespaces[$i];
+        }
+    }
+
+    // find which namespaces have been added
+    string $addNamespaces[], $addRefNodes[], $addAssets[];
+    int $addDeferred[];
+    for ($i = 0; $i < size($namespaces); $i++)
+    {
+        string $filename = removeCopyNumber($assets[$i]);
+        string $assetName = getPath("AssetNameFromFilename",{$filename});
+        string $assetType = getPath("AssetTypeFromFilename",{$filename});
+
+        // ignore invalid assets
+        if ($assetName == "" || $assetType == "")
+            continue;
+
+        // ignore non-master cameras
+        if (tolower($assetType) == "camera" && isMasterCam($assetName) == 0)
+            continue;
+
+        // ignore if not in okay to add array
+        if (!stringArrayContains($namespaces[$i], $okayToAdd))
+            continue;
+
+        int $index = stringArrayFindIndex($namespaces[$i], $curNamespaces);
+        if ($index == -1 || $curReserved[$index] == 1)
+        {
+            $addNamespaces[size($addNamespaces)] = $namespaces[$i];
+            $addRefNodes[size($addRefNodes)] = $refNodes[$i];
+            $addDeferred[size($addDeferred)] = $deferred[$i];
+            $addAssets[size($addAssets)] = $assets[$i];
+        }
+    }
+
+    // read the structure file and update it with new slice info
+    int $modified[];
+    $modified[0] = false;
+    $newxml = getUpdatedStructureFileXml($strucfile, $sequence, $shot, $slice,
+                $namespaces, $refNodes, $deferred, $assets,
+                $addNamespaces, $addRefNodes, $addDeferred, $addAssets,
+                $removeNamespaces, {},
+                "Updating to add and remove assets in slice " + $slice, $modified);
+    if ($newxml != "" && $modified[0] == true) {
+        writeFile($strucfile, $newxml);
+        backupStructureFile($strucfile);
+    }
+
+    // get rid of the wait file to allow free access to the files
+    rm_file ($waitFile);
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Read the structure file and update it with the given updated slice information
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesUpdateStructure(string $sequence, string $shot, string $slice,
+        string $namespaces[], string $refNodes[], int $deferred[], string $assets[])
+{
+    // all namespaces are okay to add
+    string $okayToAdd[] = $namespaces;
+    doUpdateStructure($sequence, $shot, $slice, $okayToAdd, $namespaces, $refNodes, $deferred, $assets);
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Read the structure file and update it using the current slice namespaces, only adding namespaces
+// if they are in the okayToAdd array
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesUpdateStructureFromCurrent(string $sequence, string $shot, string $slice, string $okayToAdd[])
+{
+    // get a list of all of the references and their namespaces
+    string $refNodes[] = `ls -rf`;
+    string $filenames[];
+    string $namespaces[];
+    int $deferred[];
+    for ($i = 0; $i < size($refNodes); $i++) {
+        $filenames[$i] = `referenceQuery -f $refNodes[$i]`;
+        $deferred[$i] = `file -q -deferReference $filenames[$i]`;
+        $namespaces[$i] = `file -q -namespace $filenames[$i]`;
+        string $parent_ns[] = `file -q -parentNamespace $filenames[$i]`;
+        if (size($parent_ns) == 1 && $parent_ns[0] != "") {
+            $namespaces[$i] = $parent_ns[0] + ":" + $namespaces[$i];
+        }
+    }
+
+    // now add in anything in okayToAdd
+    for ($i = 0; $i < size($okayToAdd); $i++)
+    {
+        int $index = stringArrayFindIndex($okayToAdd[$i], $namespaces);
+        if ($index < 0) {
+            $namespaces[size($namespaces)] = $okayToAdd[$i];
+            $refNodes[size($refNodes)] = "";
+            $deferred[size($deferred)] = 0;
+            $filenames[size($filenames)] = "";
+        }
+    }
+
+    doUpdateStructure($sequence, $shot, $slice, $okayToAdd, $namespaces, $refNodes, $deferred, $filenames);
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Read the structure file and update it to handle a transfer
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesUpdateStructurePostTransfer(string $sequence, string $shot, string $slice,
+        string $old_namespaces[], string $namespaces[], string $refNodes[], int $deferred[], string $assets[])
+{
+    string $location = getPhysicalLocation();
+    if ($location != "DFW" && $location != "LAX") {
+        print("ERROR: Attempted to update the structure file from location '" + $location + "' which is not allowed\n");
+        return;
+    }
+
+    loadPlugins();
+
+    string $newxml;
+    string $strucfile = getStructureFile($sequence, $shot);
+    string $waitFile = getStructureWaitFile($sequence, $shot);
+    float $timeout = 60;
+    float $retryInterval = 5;
+    // wait for the file...if it is in use, it will wait until it isn't, or it times out, whichever happens sooner
+    waitForFile($strucfile, $waitFile, $timeout, $retryInterval);
+    int $fileID = fopen($waitFile, "w");
+    fclose ($fileID);
+
+    // read the structure file and update it with new slice info
+    int $modified[];
+    $modified[0] = false;
+    $newxml = getUpdatedStructureFileXml($strucfile, $sequence, $shot, $slice,
+                {}, {}, {}, {},
+                $namespaces, $refNodes, $deferred, $assets,
+                $old_namespaces, $old_namespaces,
+                "Updating to transfer assets to slice " + $slice, $modified);
+    if ($newxml != "" && $modified[0] == true) {
+        writeFile($strucfile, $newxml);
+        backupStructureFile($strucfile);
+    }
+
+    // get rid of the wait file to allow free access to the files
+    rm_file ($waitFile);
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc int isEmptyNamespace(string $namespace)
+{
+    if (`namespace -exists $namespace`) {
+        string $cur_ns = `namespaceInfo -currentNamespace`;
+
+        // check for child references in the namespace
+        string $refNodes[] = `ls -references ($namespace+":*")`;
+        if (size($refNodes) > 0)
+            return false;
+
+        // check for nodes in the namespace
+        namespace -set $namespace;
+        string $nodes[] = `namespaceInfo -dp -lod`;
+        namespace -set $cur_ns;
+        if (size($nodes) > 0)
+            return false;
+
+        // check for child namespaces in the namespace
+        namespace -set $namespace;
+        string $namespaces[] = `namespaceInfo -lon`;
+        namespace -set $cur_ns;
+        if (size($namespaces) > 0)
+            return false;
+    }
+    return true;
+}
+
+// -------------------------------------------------------------------------------------------------
+proc deleteNamespace(string $namespace)
+{
+    if (`namespace -exists $namespace`) {
+        string $cur_ns = `namespaceInfo -currentNamespace`;
+
+        // remove all child references in the namespace
+        string $refNodes[] = `ls -references ($namespace+":*")`;
+        for ($i = 0; $i < size($refNodes); $i++) {
+            if (`objExists($refNodes[$i])`) {
+                string $refFile = `referenceQuery -f $refNodes[$i]`;
+                string $refNamespace = `file -q -namespace $refFile`;
+                string $parent_ns[] = `file -q -parentNamespace $refFile`;
+                if (size($parent_ns) == 1 && $parent_ns[0] != "") {
+                    $refNamespace = $parent_ns[0] + ":" + $refNamespace;
+                }
+
+                file -removeReference -referenceNode $refNodes[$i];
+                string $fosterParent = $refNodes[$i]+"fosterParent1";
+
+                deleteNamespace($refNamespace);
+
+                if (`objExists($fosterParent)`) {
+                    // deleting the reference created a fosterParent group, delete it as well
+                    delete $fosterParent;
+                }
+            }
+        }
+
+        // remove all nodes in the namespace
+        namespace -set $namespace;
+        string $nodes[] = `namespaceInfo -dp -lod`;
+        namespace -set $cur_ns;
+        if (size($nodes) > 0) {
+            delete $nodes;
+        }
+
+        // remove all child namespaces in the namespace
+        namespace -set $namespace;
+        string $namespaces[] = `namespaceInfo -lon`;
+        namespace -set $cur_ns;
+        for ($i = 0; $i < size($namespaces); $i++) {
+            deleteNamespace($namespaces[$i]);
+        }
+
+        // remove the empty namespace
+        namespace -removeNamespace $namespace;
+    }
+}
+
+
+// -------------------------------------------------------------------------------------------------
+// Reserve a namespace for the given asset, an unused namespace will be based on the given asset name and returned
+// -------------------------------------------------------------------------------------------------
+global proc string AnimSlicesReserveNamespace(string $sequence, string $shot, string $slice, string $asset)
+{
+    loadPlugins();
+
+    int $usePipelineWebservice = false;
+    int $useSlicePrefix = false;
+    int $updateStructureFile = true;
+    string $location = getPhysicalLocation();
+    if ($location != "DFW" && $location != "LAX") {
+        // we are offsite, so use the pipeline webservice to query and update the structure file
+        $usePipelineWebservice = true;
+
+        // *** NOTE *** once offsite people can get to the pipeline webservice, remove the following lines
+        $usePipelineWebservice = false;
+        $useSlicePrefix = true;
+        $updateStructureFile = false;
+        // *** NOTE ***
+    }
+
+    // set the result to asset name
+    string $result = $asset;
+
+    if ($useSlicePrefix && $slice != "") {
+        $result = $slice + "_" + $result;
+    }
+
+    // now build a list of all namespaces that start with the current result that are already in use
+    string $inUse[];
+
+    // include existing namespaces that are not empty
+    string $cur_ns = `namespaceInfo -currentNamespace`;
+    namespace -set ":";
+    string $existing[] = `namespaceInfo -lon`;
+    namespace -set $cur_ns;
+    for ($ns in $existing) {
+        if (!isEmptyNamespace($ns))
+            $inUse[size($inUse)] = $ns;
+    }
+
+    // include namespaces of unloaded refs
+    string $allRefNodes[] = `ls -rf`;
+    for ($i = 0; $i < size($allRefNodes); $i++) {
+        string $filename = `referenceQuery -f $allRefNodes[$i]`;
+        if (`file -q -deferReference $filename`) {
+            string $ns = `file -q -namespace $filename`;
+            string $parent_ns[] = `file -q -parentNamespace $filename`;
+            if (size($parent_ns) == 1 && $parent_ns[0] != "") {
+                $ns =  $parent_ns[0] + ":" + $ns;
+            }
+
+            $inUse[size($inUse)] = $ns;
+        }
+    }
+
+    // get the structure file as an xml string
+    string $structureXml;
+    string $strucfile, $waitFile;
+    if ($usePipelineWebservice) {
+        // try to get the structure file from the pipeline webservice
+        string $filename = `file -q -exn`;
+        string $url = "http://pipeline.reelfx.com/shot_structure_data";
+        $url += "?project=" + getPath("ProjectFromFilename", {$filename});
+        $url += "&sequence=" + $sequence;
+        $url += "&shot=" + $shot;
+        $structureXml = rfxHttpGet($url);
+        if (!startsWith($structureXml, "<ShotGroup")) {
+            print("WARNING: Invalid response from pipeline webservice, using local structure file instead\n");
+            $strucfile = getStructureFile($sequence, $shot);
+        }
+    }
+    else {
+        // get the structure file directly
+        $strucfile = getStructureFile($sequence, $shot);
+        if ($updateStructureFile) {
+            $waitFile = getStructureWaitFile($sequence, $shot);
+            float $timeout = 60;
+            float $retryInterval = 5;
+            // wait for the file...if it is in use, it will wait until it isn't, or it times out, whichever happens sooner
+            waitForFile($strucfile, $waitFile, $timeout, $retryInterval);
+            int $fileID = fopen($waitFile, "w");
+            fclose ($fileID);
+        }
+    }
+    if ($strucfile != "") {
+        if (`filetest -f $strucfile`) {
+            $structureXml = readXML($strucfile, 0);
+        }
+        else {
+            print("WARNING: The structure file " + $strucfile + " does not exist\n");
+        }
+    }
+
+    // include namespaces in other slices and non-reserved namespaces in this slice
+    string $sliceNames[], $namespaces[];
+    int $namespacesInSlice[], $reserved[];
+    AnimSlicesGetSlicesFromXmlString($structureXml, $sliceNames, $namespacesInSlice, $namespaces, $reserved);
+    int $index = 0;
+    for ($i = 0; $i < size($sliceNames); $i++) {
+        if ($sliceNames[$i] == $slice) {
+            for ($j = 0; $j < $namespacesInSlice[$i]; $j++) {
+                if (!$reserved[$index])
+                    $inUse[size($inUse)] = $namespaces[$index];
+                $index++;
+            }
+        }
+        else {
+            for ($j = 0; $j < $namespacesInSlice[$i]; $j++) {
+                $inUse[size($inUse)] = $namespaces[$index];
+                $index++;
+            }
+        }
+    }
+
+    // make sure the result is unique
+    string $base;
+    int $num = 0;
+    while (stringArrayContains($result, $inUse)) {
+        if ($num == 0) {
+            // split the base and num
+            string $numStr = `match "[0-9]+$" $result`;
+            if ($numStr != "") {
+                $num = $numStr;
+            }
+            $base = startString($result, size($result) - size($numStr));
+        }
+        $num++;
+
+        $result = $base + $num;
+    }
+
+    if ($result != "") {
+        // delete the namespace, in case it exists (since we only exclude non-empty namespaces above)
+        deleteNamespace($result);
+
+        if ($updateStructureFile) {
+            if ($usePipelineWebservice) {
+                string $filename = `file -q -exn`;
+                string $url = "http://pipeline.reelfx.com/shot_reserve_namespace";
+                $url += "?project=" + getPath("ProjectFromFilename", {$filename});
+                $url += "&sequence=" + $sequence;
+                $url += "&shot=" + $shot;
+                $url += "&animslice=" + $slice;
+                $url += "&namespace=" + $result;
+                string $response = rfxHttpGet($url);
+                if (!startsWith($response, "<ShotGroup")) {
+                    print("WARNING: Invalid response from pipeline webservice, prefixing namespace with slice\n");
+                }
+            }
+            else {
+                // read the structure file and update it with new reseved namespace
+                string $addNamespaces[], $addRefNodes[], $addAssets[];
+                int $addDeferred[];
+                $addNamespaces[0] = $result;
+                $addRefNodes[0] = "";
+                $addDeferred[0] = 0;
+                $addAssets[0] = "";
+                int $modified[];
+                $modified[0] = false;
+                $newxml = getUpdatedStructureFileXml($strucfile, $sequence, $shot, $slice,
+                            {}, {}, {}, {},
+                            $addNamespaces, $addRefNodes, $addDeferred, $addAssets,
+                            {}, {},
+                            "Updating to reserve a name for slice " + $slice, $modified);
+                if ($newxml != "" && $modified[0] == true) {
+                    writeFile($strucfile, $newxml);
+                    backupStructureFile($strucfile);
+                }
+            }
+        }
+    }
+
+    if ($waitFile != "") {
+        // get rid of the wait file to allow free access to the files
+        rm_file ($waitFile);
+    }
+
+    return $result;
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc int rfind_slash(string $path, int $start)
+{
+    int $result = $start;
+    while ($result > 0)
+    {
+        if (substring($path, $result, $result) == "/")
+        {
+            break;
+        }
+        $result--;
+    }
+    return $result;
+}
+
+// -------------------------------------------------------------------------------------------------
+proc updateCacheAttr(string $cacheNode)
+{
+    if (!`objExists $cacheNode`) {
+        print("WARNING: Expected a node named " + $cacheNode + "\n");
+        return;
+    }
+
+    if (catchQuiet(`ls $cacheNode`)) {
+        print("WARNING: Multiple nodes named " + $cacheNode + "\n");
+        return;
+    }
+
+    string $filename, $datetime;
+    python("from maya import cmds; import os; import datetime");
+    $filename = python("os.path.realpath(cmds.getAttr('"+$cacheNode+".filename'))");
+    if (`filetest -f $filename`) {
+        $datetime = python("str(datetime.datetime.fromtimestamp(int(os.path.getctime(os.path.realpath(cmds.getAttr('"+$cacheNode+".filename'))))))");
+    }
+
+    string $version = "";
+    int $last_slash = rfind_slash($filename, size($filename));
+    if ($last_slash > 0)
+    {
+        int $next_to_last_slash = rfind_slash($filename, $last_slash - 1);
+        if ($next_to_last_slash > 0)
+        {
+            $version = substring($filename, $next_to_last_slash + 1, $last_slash - 1);
+        }
+    }
+
+
+    if (!`attributeQuery -node $cacheNode -exists "CacheVersion"`)
+    {
+        addAttr -ln "CacheVersion" -dt "string" $cacheNode;
+    }
+    setAttr -type "string" ($cacheNode + ".CacheVersion") $version;
+
+    if (!`attributeQuery -node $cacheNode -exists "CacheDate"`)
+    {
+        addAttr -ln "CacheDate" -dt "string" $cacheNode;
+    }
+    setAttr -type "string" ($cacheNode + ".CacheDate") $datetime;
+
+    if (!`attributeQuery -node $cacheNode -exists "usage"`)
+    {
+        addAttr -ln "usage" -dt "string" $cacheNode;
+    }
+    setAttr -type "string" ($cacheNode + ".usage") "animslices";
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc loadInvalidCachedRigs(string $namespaces[], string $refNodes[], string $refNodesNamespaces[])
+{
+    // get the caches currently in the file
+    string $caches[];
+    getAlembicAssetCaches($caches);
+    for ($i = 0; $i < size($caches); $i++)
+    {
+        string $namespace = getNamespaceFromString($caches[$i]);
+
+        if ($namespace != "" && stringArrayContains($namespace, $namespaces))
+        {
+            if (`objExists ($caches[$i]+".filename")`) {
+                string $filename = `getAttr ($caches[$i]+".filename")`;
+                if (!`filetest -f $filename`) {
+                    // cache is pointing to a file that doesn't exist
+                    int $rnIndex = stringArrayFindIndex($namespace, $refNodesNamespaces);
+                    if ($rnIndex >= 0) {
+                        print("Found invalid cache and switching back to rig: " + $namespace + "\n");
+                        delete ($namespace+":master");
+                        file -force -loadReference $refNodes[$rnIndex];
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc updateInvalidCachesToLatest(string $namespaces[], string $cachefiles[])
+{
+    string $caches[];
+    getAlembicAssetCaches($caches);
+    for ($i = 0; $i < size($caches); $i++)
+    {
+        if (`objExists ($caches[$i]+".filename")`) {
+            string $namespace = getNamespaceFromString($caches[$i]);
+            string $filename = `getAttr ($caches[$i]+".filename")`;
+            if (!`filetest -f $filename`) {
+                // cache is pointing to a file that doesn't exist
+                int $index = stringArrayFindIndex($namespace, $namespaces);
+                if ($index >= 0) {
+                    print("Found invalid cache and switching to latest: " + $namespace + "\n");
+                    setAttr -type "string" ($caches[$i]+".filename") $cachefiles[$index];
+                }
+            }
+        }
+    }
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc updateCacheAttrNamespaces(string $namespaces[])
+{
+    // get the caches currently in the file
+    string $caches[];
+    getAlembicAssetCaches($caches);
+    for ($i = 0; $i < size($caches); $i++)
+    {
+        string $namespace = getNamespaceFromString($caches[$i]);
+
+        if ($namespace != "" && stringArrayContains($namespace, $namespaces))
+        {
+            updateCacheAttr($caches[$i]);
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+global proc getCurrentAlembicCacheNamespaces(string $current_ns[])
+{
+    // get the namespaces of caches currently in the file
+    clear $current_ns;
+
+    string $caches[];
+    getAlembicAssetCaches($caches);
+    for ($i = 0; $i < size($caches); $i++)
+    {
+        string $ns = getNamespaceFromString($caches[$i]);
+        if ($ns != "") {
+            $current_ns[size($current_ns)] = $ns;
+        }
+    }
+    $current_ns = stringArrayRemoveDuplicates($current_ns);
+}
+// -------------------------------------------------------------------------------------------------
+proc getCurrentSetAssemblyCacheNamespaces(string $current_ns[])
+{
+    // get the namespaces of caches currently in the file
+    clear $current_ns;
+
+    string $namespaces[] = `namespaceInfo -listOnlyNamespaces`;
+    for ($i = 0; $i < size($namespaces); $i++)
+    {
+        string $fileAttr = $namespaces[$i] + ":master.filename";
+        if (`objExists $fileAttr`) {
+            string $filename = `getAttr $fileAttr`;
+            if (endString($filename, 13) == "_assembly.xml") {
+                $current_ns[size($current_ns)] = $namespaces[$i];
+            }
+        }
+    }
+    $current_ns = stringArrayRemoveDuplicates($current_ns);
+}
+
+// -------------------------------------------------------------------------------------------------
+global proc getCurrentNamespaceSlicesFromGroups(string $namespaces[], string $slices[])
+{
+    global string $slicegroup_prefix, $slicegroup_suffix;
+
+    clear $slices;
+
+    // figure out the slice for each namespace
+    int $pre_size = size($slicegroup_prefix);
+    int $suf_size = size($slicegroup_suffix);
+
+    for ($i = 0; $i < size($namespaces); $i++)
+    {
+        string $slice = "";
+        string $namespace = $namespaces[$i];
+        if ($namespace == "stereoCam") {
+            if (`objExists "stereoCam:stereoCamera"`) {
+                $slice = rootOf("stereoCam:stereoCamera");
+            }
+        }
+        else {
+            if (`objExists ($namespace+":master")`) {
+                // check for a non-unique object name - this is possible if we have a namespace as a rig, which conflicts with a namespace in a different slice
+                string $object = $namespace+":master";
+                string $res[] = `ls -l $object`;
+                if (size($res)>1)	// problems. We have a guest and a rig loaded at the same time. Loop through and find the guest
+                {
+                    for ($j=0;$j<size($res);$j++)
+                    {
+                        if (size(`listRelatives -c -pa -f -type "rfxAlembicMeshGpuCache" $res[$j]`)) {
+                            $object = $res[$j];
+                            break;
+                        }
+                    }
+                }
+                else if (size($res)==1)
+                {
+                    $object = $res[0];
+                }
+                $slice = rootOf($object);
+            }
+        }
+        if ($slice != "" && substring($slice,1,1) == "|") {
+            $slice = substring($slice, 2, size($slice));
+        }
+
+        if ($slice != "") {
+            string $pre = substring($slice, 1, $pre_size);
+            string $mid = substring($slice, $pre_size+1, size($slice)-$suf_size);
+            string $suf = substring($slice, size($slice)-$suf_size+1, size($slice));
+            if ($pre == $slicegroup_prefix && $suf == $slicegroup_suffix) {
+                $slice = $mid;
+            }
+            else {
+                $slice = "";
+            }
+        }
+
+        $slices[$i] = $slice;
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc separateNamespacesOfCachedRigs(string $slice, string $namespaces[], string $cachedRigs[],
+        string $refNodes[], string $refNodesNamespaces[], string $refNodesSlices[])
+{
+    clear $cachedRigs;
+    string $result[];
+    for ($i = 0; $i < size($namespaces); $i++)
+    {
+        string $namespace = $namespaces[$i];
+        if ($namespace != "" && $namespace != "stereoCam")
+        {
+            // make sure this is not a cached version of a rig
+            int $index = stringArrayFindIndex($namespace, $refNodesNamespaces);
+            if ($index >= 0 && $refNodesSlices[$index] == $slice)
+            {
+                string $refNode = $refNodes[$index];
+                if (`objExists $refNode`)
+                {
+                    // this is a cached rig
+                    $cachedRigs[size($cachedRigs)] = $namespace;
+                    $namespace = "";
+                }
+            }
+        }
+
+        if ($namespace != "")
+        {
+            $result[size($result)] = $namespace;
+        }
+    }
+    $namespaces = $result;
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc string ensureSliceGroupExists(string $slice, string $parent)
+{
+    global string $slicegroup_prefix, $slicegroup_suffix;
+
+    string $cur_ns_prefix = "";
+    string $cur_ns = `namespaceInfo -cur`;
+    if ($cur_ns != ":") {
+        $cur_ns = ":" + $cur_ns;
+        $cur_ns_prefix = $cur_ns + ":";
+    }
+
+    // ensure the slice group exists
+    string $groupName = "";
+    if ($slice == "") {
+        $groupName = $parent;
+    }
+    else {
+        string $group = $cur_ns_prefix + $slicegroup_prefix + $slice + $slicegroup_suffix;
+        if ($parent == "") {
+            $groupName = $group;
+            if (!`objExists $groupName`) {
+                $groupName = `group -empty -world -name $groupName`;
+                lockNode -l 1 $groupName;
+            }
+        }
+        else {
+            $groupName = $parent + "|" + $group;
+            if (!`objExists $groupName`) {
+                $groupName = `group -empty -parent $parent -name $group`;
+                $groupName = $parent + "|" + $groupName;
+                lockNode -l 1 $groupName;
+            }
+        }
+    }
+
+    return $groupName;
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc string[] importCache(string $slice, string $namespace, string $refNode, string $cachefile, string $parent, string $timeNode, int $noCacheNamespace)
+{
+    if ($namespace == "") {
+        print("Warning - trying to importCache from " + $cachefile + " with no namespace given\n");
+        return {};
+    }
+    
+    string $cur_ns_prefix = "";
+    string $cur_ns = `namespaceInfo -cur`;
+    if ($cur_ns != ":") {
+        $cur_ns = ":" + $cur_ns;
+        $cur_ns_prefix = $cur_ns + ":";
+    }
+    
+    /* Some extra checking - if we are working on stereoCam, and it is present but unloaded, then skip
+    */
+    if ($namespace == "stereoCam" && `objExists $refNode`) {
+        string $file = `referenceQuery -f $refNode`;
+        int $isUnloaded = `file -q -dr $file`;
+        if ($isUnloaded) {
+            print ("Warning - Stereo Camera is present, but unloaded. Skipping.\n");
+            return {};
+        }
+    }
+
+    string $groupName = ensureSliceGroupExists($slice, $parent);
+
+    // build the command
+    int $addedCam = false;
+    loadAlembicPlugin();
+    string $lockXform = "";
+    string $importCmd = "importRfxAlembicCache";
+    $importCmd += " -usage \"animslices\"";
+    if ($namespace == "stereoCam") {
+        string $stereoRigFile = getPath("AssetLiveDir", {"camera", "stereoCam"}) + "/stereoCam_live.ma";
+        if (!`objExists $refNode`) {
+            if (`namespace -exists "stereoCam"`) {
+                // namespace already exists - see if we can delete it.
+                string $nodes[] = `ls "stereoCam:*"`;
+                if (size($nodes)) {
+                    // if there are no dag nodes in the namespace, consider everything else safe to delete
+                    if (!size(`ls -dag $nodes`)) {
+                        delete $nodes;
+                        $nodes = `ls "stereoCam:*"`;
+                    }
+                }
+                if (!size($nodes)) {
+                    print ("Removing namespace stereoCam\n");
+                    namespace -rm "stereoCam";
+                }
+            }
+            if (!`namespace -exists "stereoCam"`) {
+                file -r -ns $namespace -rfn $refNode $stereoRigFile;
+                $refNode = $cur_ns_prefix+$refNode;
+                $addedCam = true;
+            }
+            else {
+                error ("Couldn't add stereoCam - namespace is already taken. Please see a TD.");
+            }
+        }
+        else {
+            file -force -loadReference $refNode $stereoRigFile;
+        }
+        if ($groupName != "") {
+            string $camParents[] = `listRelatives -p -pa ($cur_ns_prefix+"stereoCam:stereoCamera")`;
+            if ($camParents[0] != $groupName && $groupName != "") {
+                parent ($cur_ns_prefix+"stereoCam:stereoCamera") $groupName;
+            }
+        }
+
+        $importCmd += " -srn \"" + $cur_ns_prefix+$namespace + "\"";
+        $importCmd += " -nodePath \"stereoCam:stereoCamera\"";
+    }
+    else {
+        if ($groupName != "") {
+            $importCmd += " -parent \"" + $groupName + "\"";
+        }
+        $importCmd += " -singleMesh \"" + $namespace + ":master\"";
+        if ($noCacheNamespace) {
+            $importCmd += " -noCacheNamespace";
+        }
+        $importCmd += " -gpuMesh";
+        $importCmd += " -nodePath \"\"";
+        $lockXform = $cur_ns_prefix+$namespace + ":master";
+    }
+    
+    if ($timeNode != "time1.outTime") {
+        $importCmd += " -timeNode \"" + $timeNode + "\"";
+    }
+    
+    $importCmd += " \"" + $cachefile + "\"";
+    string $newCacheNodes[] = eval($importCmd);
+    
+    for ($i = 0; $i < size($newCacheNodes); $i++)
+    {
+        updateCacheAttr($newCacheNodes[$i]);
+    }
+
+    if ($lockXform != "") {
+        lockTransform($lockXform);
+    }
+
+    if ($addedCam)
+    {
+        file -ur $refNode;
+        setAttr ($refNode+".locked") 1;
+        file -lr $refNode;
+    }
+
+    return $newCacheNodes;
+}
+
+// -------------------------------------------------------------------------------------------------
+proc moveCache(string $slice, string $namespace, string $parent)
+{
+    string $groupName = ensureSliceGroupExists($slice, $parent);
+    
+    if ($slice != "")
+    {
+        // reparent the cache, including the controls group, if it exists
+        if ($namespace == "stereoCam") {
+            string $cam = "stereoCam:stereoCamera";
+            if (`objExists($cam)`) {
+                unlockCamera($cam);
+                parent $cam $groupName;
+            }
+        }
+        else {
+            if (`objExists($namespace+":master")`) {
+                parent ($namespace+":master") $groupName;
+            }
+            if (`objExists($namespace+":controlCache_GRP")`) {
+                parent ($namespace+":controlCache_GRP") $groupName;
+            }
+        }
+    }
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc importSetAssembly(string $slice, string $namespace, string $cachefile, string $parent)
+{
+    string $groupName = ensureSliceGroupExists($slice, $parent);
+
+    // create a group for the set
+    string $baseNode = ($namespace+":master");
+
+    if (!`namespace -exists $namespace`)
+        namespace -add $namespace;
+
+    $baseNode = `group -empty -parent $groupName -name $baseNode`;
+    if (!`attributeQuery -node $baseNode -exists "filename"`) {
+        addAttr -ln "filename" -dt "string" -uaf $baseNode;
+    }
+    setAttr -type "string" ($baseNode + ".filename") $cachefile;
+
+    updateCacheAttr($baseNode);
+}
+
+// -------------------------------------------------------------------------------------------------
+proc updateSetAssemblyVisibility(string $node, string $visibility)
+{
+    string $visAttr = $node + ".visibility";
+    if (`objExists $visAttr`) {
+        string $protected[] = attributeProtect.getProtectedAttributes($node);
+        if (!stringArrayContains("visibility", $protected)) {
+            int $vis = 1;
+            if ($visibility == "0") {
+                print("setAttr " + $visAttr + " 0\n");
+                $vis = 0;
+            }
+            if (catch(`setAttr $visAttr $vis`)) {
+                print("updateSetAssemblyVisibility: setAttr " + $visAttr + " failed - there may be multiple nodes with this name\n");
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc string getCacheFromNode(string $node)
+{
+    string $cacheDescendents[] = `listRelatives -path -fullPath -ad -type "rfxAlembicMeshCache" -type "rfxAlembicMeshGpuCache" $node`;
+    if (size($cacheDescendents) > 0) {
+        return $cacheDescendents[0];
+    }
+    return "";
+}
+
+// -------------------------------------------------------------------------------------------------
+proc updateSetAssemblyOverrideColors(string $cache, string $overrideColors)
+{
+    if (`objExists $cache` && `pluginInfo -q -l "rfx_alembic"`) {
+        string $ocAttr = $cache + ".overrideColors";
+        if (`objExists $ocAttr`) {
+            setAttr $ocAttr -type "string" $overrideColors;
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc updateSetAssemblyOverrideVisibles(string $cache, string $overrideVisibles)
+{
+    if (`objExists $cache` && `pluginInfo -q -l "rfx_alembic"`) {
+        string $ovAttr = $cache + ".overrideVisibles";
+        if (`objExists $ovAttr`) {
+            setAttr $ovAttr -type "string" $overrideVisibles;
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc string getChecksum(string $cache)
+{
+    string $result = "";
+    if (`objExists $cache` && `pluginInfo -q -l "rfx_alembic"`) {
+        string $md5Attr = $cache + ".checksum";
+        if (objExists($md5Attr)) {
+            $result = `getAttr $md5Attr`;
+        }
+    }
+    return $result;
+}
+
+// -------------------------------------------------------------------------------------------------
+proc registerCache(string $checksum, string $cache, string $checksum2cache[])
+{
+    $checksum2cache[size($checksum2cache)] = $checksum;
+    string $path[] = stringToStringArray($cache, "|");
+    $checksum2cache[size($checksum2cache)] = $path[size($path)-1];
+    if (objExists($cache)) {
+        addAttr -ln "checksum" -dt "string" $cache;
+        setAttr ($cache + ".checksum") -type "string" $checksum;
+    }    
+}
+
+// -------------------------------------------------------------------------------------------------
+proc unregisterCache(string $checksum, string $checksum2cache[])
+{
+    int $index = stringArrayFindIndex($checksum, $checksum2cache);
+    if ($index >= 0) {
+        stringArrayRemoveAtIndex($index, $checksum2cache);
+        stringArrayRemoveAtIndex($index, $checksum2cache);
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc fillChecksum2CacheArray(string $baseNode, string $checksum2cache[])
+{
+    clear($checksum2cache);
+    if (objExists($baseNode)) {
+        string $caches[] = `listRelatives -path -fullPath -ad -type "rfxAlembicMeshGpuCache" $baseNode`;
+        for ($cache in $caches) {
+            string $checksumAttr = $cache + ".checksum";
+            if (objExists($checksumAttr)) {
+                $checksum2cache[size($checksum2cache)] = getAttr($checksumAttr);
+                string $path[] = stringToStringArray($cache, "|");
+                $checksum2cache[size($checksum2cache)] = $path[size($path)-1];
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc string firstParentOfSafe(string $cache)
+{
+    string $lsResult[] = `ls -long $cache`;
+    if (size($lsResult) < 2) {
+        return firstParentOf($cache);
+    }
+
+    for ($c in $lsResult) {
+        if (gmatch($c, "*_Set_Proxy_Items_*")) continue; // ignore proxy items
+        return firstParentOf($cache);
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc ensureNamespaceExists(string $namespace)
+{
+    string $cur_ns = `namespaceInfo -cur`;
+    if ($cur_ns != ":") {
+        $cur_ns = ":" + $cur_ns;
+    }
+    
+    string $tokens[];
+    tokenize($namespace, ":", $tokens);
+    if (size($tokens) > 1) {
+        for ($j = 0; $j < size($tokens); $j++) {
+            if (!`namespace -exists $tokens[$j]`) {
+                namespace -add $tokens[$j];
+            }
+            namespace -setNamespace $tokens[$j];
+        }
+    }
+
+    namespace -setNamespace $cur_ns;
+}
+
+// -------------------------------------------------------------------------------------------------
+proc updateSetAssemblyHelper(string $node, int $isGroup, string $xml, string $deleteGroups[], string $worldMatrix[], 
+                             string $overrideColors[], string $overrideVisibles[], string $checksum2cache[])
+{
+    string $cur_ns_prefix = "";
+    string $cur_ns = `namespaceInfo -cur`;
+    if ($cur_ns != ":") {
+        $cur_ns = ":" + $cur_ns;
+        $cur_ns_prefix = $cur_ns + ":";
+    }
+
+    string $childNodes[];
+    if ($isGroup) {
+        $childNodes = `listRelatives -children $node`;
+    }
+
+    string $childrenXML[] = xml_getChildTags($xml);
+    for ($i = 0; $i < size($childrenXML); $i++) {
+        string $childXML = $childrenXML[$i];
+        string $tagname = xml_getTagName($childXML);
+        if ($tagname == "worldMatrix") {
+            string $matrix = xml_getCharacterData($childXML);
+            if (size($worldMatrix) > 0) {
+                // pass the worldMatrix back to the caller
+                $worldMatrix[0] = $matrix;
+            }
+            else {
+                // apply the worldMatrix now
+                unlockTransform($node);
+                eval("xform -worldSpace -matrix "+$matrix+" \""+$node+"\";");
+                lockTransform($node);
+            }
+        }
+        else if ($tagname == "object") {
+            string $objName = xml_getVar($childXML, "name");
+            string $objColor = xml_getVar($childXML, "color");
+            if ($objColor != "") {
+                $overrideColors[size($overrideColors)] = $objName + "=" + $objColor;
+            }
+            string $objVisibility = xml_getVar($childXML, "visibility");
+            if ($objVisibility != "") {
+                $overrideVisibles[size($overrideVisibles)] = $objName + "=" + $objVisibility;
+            }
+        }
+        else if ($tagname == "component") {
+            string $componentXML = xml_pruneChildren($childXML);
+            string $namespace = xml_getVar($componentXML, "namespace");
+            string $assetType = xml_getVar($componentXML, "assetType");
+            string $assetName = xml_getVar($componentXML, "assetName");
+            string $visibility = xml_getVar($componentXML, "visibility");
+            string $name = $cur_ns_prefix + $namespace + ":master";
+            string $nodeAndName = $node + "|" + $name;
+
+            string $worldMatrix[], $overColorsArray[], $overVisiblesArray[];
+            $worldMatrix[0] = "";
+            clear($overColorsArray);
+            clear($overVisiblesArray);
+            updateSetAssemblyHelper($nodeAndName, false, $childXML, $deleteGroups, $worldMatrix, $overColorsArray, $overVisiblesArray, {});
+            string $overColors = stringArrayToString($overColorsArray, ";");
+            string $overVisibles = stringArrayToString($overVisiblesArray, ";");
+
+            string $cachefile = getPath("AssetAbcLiveCache", {$assetType, $assetName});
+            string $checksum[] = `fileQuery -checksum -md5 -fromString ($cachefile + "|" + $overColors + "|" + $overVisibles)`;
+            
+            int $index = stringArrayFindIndex($name, $childNodes);
+            if ($index >= 0) {
+                stringArrayRemoveAtIndex($index, $childNodes);
+            }
+
+            int $doImport = false;
+            if (`objExists $name`) {
+                string $cache = getCacheFromNode($name);
+                string $oldChecksum = getChecksum($cache);
+                if ($oldChecksum != $checksum[0]) {
+                    print("Updating set prop: " + $namespace + "\n");
+                    $doImport = true;
+                    deleteNamespace($namespace);
+                    if (!objExists($cache)) {
+                        unregisterCache($oldChecksum, $checksum2cache);
+                    }
+                }
+            }
+            else {
+                print("Found missing set prop: adding " + $namespace + "\n");
+                $doImport = true;
+            }
+
+            if ($doImport) {
+                int $index = stringArrayFindIndex($checksum[0], $checksum2cache);
+
+                if ($index == -1) {
+                    string $newCache[] = importCache("", $namespace, "", $cachefile, "", "", true);
+                    if (size($overColors) > 0) {
+                        updateSetAssemblyOverrideColors($newCache[0], $overColors);
+                    }
+                    if (size($overVisibles) > 0) {
+                        updateSetAssemblyOverrideVisibles($newCache[0], $overVisibles);
+                    }
+                    
+                    registerCache($checksum[0], $newCache[0], $checksum2cache);
+                }
+                else {
+                    string $existingCache = $checksum2cache[$index+1];                    
+                    string $existingParent = firstParentOf($existingCache);
+                    string $duplicateResult[] = `duplicate -name "SetAssymblySync_Instance" -rr -instanceLeaf $existingParent`;
+                    if (size($duplicateResult) > 0) {
+                        ensureNamespaceExists($namespace);
+                        rename $duplicateResult[0] $name;
+                    }
+                }
+            }
+
+            string $nodeFullName = $node;
+            string $lsResult[] = `ls -l $node`;
+            if (size($lsResult)) {
+                $nodeFullName = $lsResult[0];
+            }
+            if (objExists($name) && firstParentOf($name) != $nodeFullName) {
+                parent $name $node;
+            }
+
+            updateSetAssemblyVisibility($name, $visibility);
+
+            if ($worldMatrix[0] != "") {
+                unlockTransform($nodeAndName);
+                eval("xform -worldSpace -matrix "+$worldMatrix[0]+" \""+$nodeAndName+"\";");
+                lockTransform($nodeAndName);
+            }
+        }
+        else if ($tagname == "group") {
+            string $groupXML = xml_pruneChildren($childXML);
+            string $name = $cur_ns_prefix + xml_getVar($groupXML, "name");
+            string $nodeAndName = $node + "|" + $name;
+            string $visibility = xml_getVar($groupXML, "visibility");
+            int $index = stringArrayFindIndex($name, $childNodes);
+            if ($index == -1) {
+                print("Found missing set group: adding " + $nodeAndName + "\n");
+                group -empty -parent $node -name $name;
+                lockTransform($node);
+            }
+            else {
+                stringArrayRemoveAtIndex($index, $childNodes);
+            }
+
+            updateSetAssemblyHelper($nodeAndName, true, $childXML, $deleteGroups, {}, {}, {}, $checksum2cache);
+
+            updateSetAssemblyVisibility($name, $visibility);
+        }
+    }
+
+    // mark left over children for deletion
+    for ($i = 0; $i < size($childNodes); $i++) {
+        $deleteGroups[size($deleteGroups)] = $node + "|" + $childNodes[$i];
+    }
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc string getSetAssemblyTopTransform(string $filename, string $sequence, string $shot, string $namespace)
+{
+    string $setNode = ($namespace+":master");
+
+    if (`filetest -f $filename`) {
+        string $xml = "";
+        string $tokens[] = stringToStringArray($filename, "/");
+        if (size($tokens) > 1 && $tokens[size($tokens)-2] == "latest") {
+            // do special processing when we have the latest shot cache file
+            string $args = "'" + $sequence + "', '" + $shot + "', '" + $setNode + "'";
+            $xml = python("import set_assembly_sync; set_assembly_sync.get_latest_cache_xml(" + $args + ")");
+            $xml = xml_preProcess($xml);
+        }
+        else {
+            $xml = readXML($filename, 0);
+        }
+
+        string $worldMatrix[] = xml_getTag($xml, "worldMatrix");
+        if (size($worldMatrix) > 0) {
+            return xml_getCharacterData($worldMatrix[0]);
+        }
+    }
+    return "";
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Sync the set assembly cache node
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesSyncSetAssemblyCache(string $sequence, string $shot, string $namespace)
+{
+    loadPlugins();
+
+    print("Updating set assembly: " + $namespace + "\n");
+
+    string $cur_ns_prefix = "";
+    string $cur_ns = `namespaceInfo -cur`;
+    if ($cur_ns != ":") {
+        $cur_ns = ":" + $cur_ns;
+        $cur_ns_prefix = $cur_ns + ":";
+    }
+
+    string $setNode = ($namespace+":master");
+    string $baseNode = $cur_ns_prefix + $setNode;
+    if (!objExists($baseNode)) {
+        print("Skipping since the base set assembly node doesn't exist: " + $baseNode + "\n");
+        return;
+    }
+    
+    string $filename = `getAttr ($baseNode+".filename")`;
+
+    if (`filetest -f $filename`) {
+        string $xml = "";
+        string $tokens[] = stringToStringArray($filename, "/");
+        if (size($tokens) > 1 && $tokens[size($tokens)-2] == "latest") {
+            // do special processing when we have the latest shot cache file
+            string $args = "'" + $sequence + "', '" + $shot + "', '" + $setNode + "'";
+            $xml = python("import set_assembly_sync; set_assembly_sync.get_latest_cache_xml(" + $args + ")");
+            $xml = xml_preProcess($xml);
+        }
+        else {
+            $xml = readXML($filename, 0);
+        }
+
+        // remove any child namespaces that aren't in this assembly
+        string $components[];
+        string $groupXML[] = xml_getTag($xml, "group");
+        for ($g = 0; $g < size($groupXML); $g++) {
+            string $componentXML[] = xml_getTag($groupXML[$g], "component");
+            for ($i = 0; $i < size($componentXML); $i++) {
+                $components[size($components)] = xml_getVar($componentXML[$i], "namespace");
+            }
+        }
+        namespace -set $namespace;
+        string $children[] = `namespaceInfo -lon`;
+        namespace -set $cur_ns;
+        for ($i = 0; $i < size($children); $i++) {
+            if (!stringArrayContains($children[$i], $components)) {
+                print("Found unused set prop: removing " + $children[$i] + "\n");
+                deleteNamespace($children[$i]);
+            }
+        }
+
+
+        string $checksum2cache[];
+        fillChecksum2CacheArray($baseNode, $checksum2cache);
+        
+        // now parse the assembly, adding and modifying the props in this assembly
+        string $deleteGroups[];
+        string $assemblyXML[] = xml_getTag($xml, "assembly");
+        if (size($assemblyXML) == 1) {
+            string $assyXML = xml_pruneChildren($assemblyXML[0]);
+            string $visibility = xml_getVar($assyXML, "visibility");
+
+            updateSetAssemblyHelper($baseNode, true, $assemblyXML[0], $deleteGroups, {}, {}, {}, $checksum2cache);
+
+            updateSetAssemblyVisibility($baseNode, $visibility);
+        }
+
+        // now delete any groups encountered that didn't match the assembly
+        for ($i = 0; $i < size($deleteGroups); $i++) {
+            if (`objExists $deleteGroups[$i]`) {
+                print("Found unused set group: removing " + $deleteGroups[$i] + "\n");
+                delete $deleteGroups[$i];
+            }
+        }
+
+        // update the version and date attributes
+        updateCacheAttr($baseNode);
+    }
+
+    select -clear;
+
+    print("Done updating " + $namespace + "\n");
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+proc getTransferredNamespaces(string $sequence, string $shot, string $slice, string $transfers[])
+{
+    clear($transfers);
+
+    string $strucfile = getStructureFile($sequence, $shot);
+    if (`filetest -f $strucfile`)
+    {
+        string $xml = readXML($strucfile, 0);
+
+        string $animSlicesXML[] = xml_getTag($xml, "AnimSlices");
+        if (size($animSlicesXML) > 0) {
+            string $sliceXML[] = xml_getTag($animSlicesXML[0], "Slice");
+            for ($s = 0; $s < size($sliceXML); $s++) {
+                string $slice_name = xml_getVar($sliceXML[$s], "Name");
+                if ($slice == $slice_name) {
+                    string $transferXML[] = xml_getTag($sliceXML[$s], "Transferred");
+                    for ($t = 0; $t < size($transferXML); $t++) {
+                        $transfers[$t] = xml_getVar($transferXML[$t], "Name");
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Sync the caches of the current file to match the structure file
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesSyncCaches(string $sequence, string $shot, string $slice)
+{
+    global int $gAnimSlicesSyncSkip, $gAnimSlicesSyncSetAssemblySkip;
+    global string $slicegroup_prefix, $slicegroup_suffix;
+
+    if ($gAnimSlicesSyncSkip) {
+        print("Skipping anim slices sync for " + $sequence + " " + $shot + " " + $slice + " ($gAnimSlicesSyncSkip == 1)\n");
+        return;
+    }
+
+    loadPlugins();
+
+    print("Syncing anim slices cache files for " + $sequence + " " + $shot + " " + $slice + "\n");
+
+    // get the contents of the structure file
+    string $namespaces[], $refNodes[], $cachefiles[], $slices[], $sliceNames[];
+    AnimSlicesAssetListFromStructureFile($sequence, $shot,
+            $namespaces, {}, {}, $refNodes, $cachefiles, $slices, $sliceNames);
+
+    // get the namespaces transferred out of this slice
+    string $transfers[];
+    getTransferredNamespaces($sequence, $shot, $slice, $transfers);
+
+    string $sets[], $props[];
+    int $propsPerSet[];
+    string $strucfile = getStructureFile($sequence, $shot);
+    SetAssemblyUtilities.getSetsAndPropsFromStructureFile($strucfile, $sets, $propsPerSet, $props, {});
+
+    // get the namespaces of caches currently in the file
+    string $current_ns[], $current_sl[], $cachedRigs[];
+    getCurrentAlembicCacheNamespaces($current_ns);
+    separateNamespacesOfCachedRigs($slice, $current_ns, $cachedRigs, $refNodes, $namespaces, $slices);
+
+    // get the namespaces of cached set assemblies
+    string $current_sets[];
+    getCurrentSetAssemblyCacheNamespaces($current_sets);
+    appendStringArray($current_ns, $current_sets, size($current_sets));
+
+    // get the slices of namespaces
+    getCurrentNamespaceSlicesFromGroups($current_ns, $current_sl);
+
+    // load cached rigs that have invalid filenames (because they have been deleted)
+    loadInvalidCachedRigs($cachedRigs, $refNodes, $namespaces);
+
+    // update guests that have invalid filenames to latest
+    updateInvalidCachesToLatest($namespaces, $cachefiles);
+
+    // update the attributes of the current caches
+    updateCacheAttrNamespaces($current_ns);
+
+    // Clean up the master nodes that are not in a namespace in each slice group
+    for ($i = 0; $i < size($sliceNames); $i++) {
+        if ($sliceNames[$i] == $slice) continue;
+        string $slicegroup = $slicegroup_prefix + $sliceNames[$i] + $slicegroup_suffix;
+        string $badMasterNodes[] = `ls -l ($slicegroup + "|master*")`;
+        if (size($badMasterNodes) > 0) {
+            delete $badMasterNodes;
+        }
+    }
+
+    // go through the list of namespaces from the structure file,
+    // only looking at those in the given slice and if it is found
+    // in the current namespaces, mark it as used, otherwise import
+    int $used_ns[];
+    for ($i = 0; $i < size($current_ns); $i++)
+    {
+        $used_ns[$i] = false;
+    }
+
+    string $set_ns[];
+    for ($i = 0; $i < size($namespaces); $i++)
+    {
+        if ($slices[$i] == $slice) continue;
+        if (stringArrayContains($namespaces[$i], $props)) {
+            $index = stringArrayFindIndex($namespaces[$i], $current_ns);
+            if ($index != -1) {
+                $used_ns[$index] = true;
+            }
+            continue;
+        }
+
+        if (endString($cachefiles[$i], 13) == "_assembly.xml") {
+            // save this set namespace to update later
+            $set_ns[size($set_ns)] = $namespaces[$i];
+        }
+
+        $index = stringArrayFindIndex($namespaces[$i], $current_ns);
+        //if ($index >= 0 && $current_sl[$index] != "")
+        if ($index >= 0)
+        {
+            // make sure it is in the correct slice group
+            if ($slices[$i] != $current_sl[$index])
+            {
+                moveCache($slices[$i], $namespaces[$i], "");
+            }
+            // mark as used
+            $used_ns[$index] = true;
+        }
+        else if ($namespaces[$i] == "stereoCam" && $index >= 0 && `objExists $refNodes[$i]` && !`objExists ("stereoCam:stereoCamera")`)
+        {
+            // unloaded stereoCam, mark as used
+            print ("Warning - Stereo Camera is unloaded. Skipping sync...\n");
+            $used_ns[$index] = true;
+        }
+        else {
+            print("Found missing cache: adding " + $namespaces[$i] + "\n");
+            string $ext = endString($cachefiles[$i], 4);
+            if ($ext == ".abc") {
+                // if we encounter double namespaces - omit with a warning.
+                if (size(stringToStringArray($namespaces[$i],":")) > 1)
+                {
+                    warning ("Encountered invalid namespace "+$namespaces[$i]+" for cache "+$cachefiles[$i]+". Skipping...");
+                    continue;
+                }
+                if (!`filetest -f $cachefiles[$i]`)
+                {
+                    warning ("Cache file "+$cachefiles[$i]+" is missing. Skipping...");
+                    continue;
+                }
+                importCache($slices[$i], $namespaces[$i], $refNodes[$i], $cachefiles[$i], "", "time1.outTime", false);
+            }
+            else if ($ext == ".xml") {
+                importSetAssembly($slices[$i], $namespaces[$i], $cachefiles[$i], "");
+            }
+        }
+    }
+
+    // now find the namespaces that were not used and delete the associated caches
+    for ($i = 0; $i < size($used_ns); $i++)
+    {
+        if ($used_ns[$i] == true) continue;
+        if (stringArrayContains($current_ns[$i], $props)) continue;
+
+        print("Found extra cache: removing " + $current_ns[$i] + "\n");
+        if ($current_ns[$i] == "stereoCam")
+        {
+            // special handling for deleting camera, need to delete the ref node first
+            string $cam = "stereoCam:stereoCamera";
+            unlockCamera($cam);
+            string $refNode = `referenceQuery -referenceNode $cam`;
+            file -removeReference -referenceNode $refNode;
+        }
+        // If we encounter a situation where there is a guest which shares a namespace with a rig, and that namespace conflict
+        // has since been resolved in the other slice, we will need to handle the deletion differently - we just need to delete the
+        // guest master, rather than the whole namespace
+        string $nodesToDelete[] = {};
+        int $anyRefs = false;
+        string $masterNodes[] = `ls ($current_ns[$i]+":master")`;
+        for ($j=0;$j<size($masterNodes);$j++) {
+            if (`referenceQuery -inr $masterNodes[$j]`) {
+                $anyRefs = true;
+            }
+            else {
+                if (size(`listRelatives -c -pa -type "rfxAlembicMeshGpuCache" $masterNodes[$j]`))
+                    $nodesToDelete[size($nodesToDelete)] = $masterNodes[$j];
+            }
+        }
+        if ($anyRefs && size($nodesToDelete)) {
+            catch (`delete $nodesToDelete`);
+        }
+        else {
+            deleteNamespace($current_ns[$i]);
+        }
+    }
+
+    // handle transferred props in this slice
+    if (size($transfers) > 0) {
+        string $promoted_props[];
+        string $promoted_sets[];
+
+        // remove any transferred props of a set assembly prop
+        for ($i = 0; $i < size($transfers); $i++)
+        {
+            string $transfer_ns = $transfers[$i];
+            string $transfer_master = $transfer_ns + ":master";
+            if (`objExists($transfer_master)`) {
+                print("Found transferred asset: removing " + $transfer_ns + "\n");
+                string $refNode = `referenceQuery -referenceNode $transfer_master`;
+                file -removeReference -referenceNode $refNode;
+                $promoted_props[size($promoted_props)] = $transfer_ns;
+                string $tokens[] = stringToStringArray($transfer_ns, ":");
+                $promoted_sets[size($promoted_sets)] = $tokens[0];
+                deleteNamespace($transfer_ns);
+            }
+        }
+
+        // take care of any promoted props that occured because of transfers
+        if (size($promoted_props) > 0) {
+            string $sets[] = stringArrayRemoveDuplicates($promoted_sets);
+            for ($i = 0; $i < size($sets); $i++) {
+                string $setMaster = $sets[$i]+":master";
+                string $promoteAttr = $setMaster + ".setAssemblyPromoted";
+                string $promoteAttrVals[] = {};
+                if (!`objExists $promoteAttr`) {
+                    addAttr -ln "setAssemblyPromoted" -dt "stringArray" $setMaster;
+                }
+                else {
+                    $promoteAttrVals = `getAttr $promoteAttr`;
+                }
+                int $promoteAttrSize = size($promoteAttrVals);
+
+                for ($j = 0; $j < size($promoted_props); $j++) {
+                    if ($promoted_sets[$j] == $sets[$i]) {
+                        if (!stringArrayContains($promoted_props[$j], $promoteAttrVals)) {
+                            $promoteAttrVals[size($promoteAttrVals)] = $promoted_props[$j];
+                        }
+                    }
+                }
+
+                if ($promoteAttrSize != size($promoteAttrVals)) {
+                    $promoteAttrSize = size($promoteAttrVals);
+                    string $cmd = "setAttr \"" + $promoteAttr + "\" -type \"stringArray\" " + $promoteAttrSize;
+                    for ($j = 0; $j < $promoteAttrSize; $j++) {
+                        $cmd += " \"" + $promoteAttrVals[$j] + "\"";
+                    }
+                    $cmd += ";";
+                    eval($cmd);
+                }
+            }
+        }
+    }
+
+    if ($gAnimSlicesSyncSetAssemblySkip) {
+        print("Skipping anim slices set assembly sync for " + $sequence + " " + $shot + " " + $slice + " ($gAnimSlicesSyncSetAssemblySkip == 1)\n");
+    }
+    else {
+        // now sync the set assembly caches
+        for ($i = 0; $i < size($set_ns); $i++)
+        {
+            AnimSlicesSyncSetAssemblyCache($sequence, $shot, $set_ns[$i]);
+        }
+    }
+
+    print("Anim slice sync complete for " + $sequence + " " + $shot + " " + $slice + "\n");
+}
+
+
+
+// -------------------------------------------------------------------------------------------------
+proc removeAssetsInOtherSlices(string $sl, string $namespaces[], string $refNodes[], string $slices[])
+{
+    print("Removing assets not in anim slice " + $sl + "\n");
+
+    // first, clean all references not in this slice
+    for ($i = 0; $i < size($refNodes); $i++) {
+        if ($slices[$i] == $sl) {
+            // this asset is in the given slice, so skip
+            continue;
+        }
+
+        if ($namespaces[$i] == "stereoCam") {
+            // stereo camera is handled differently
+            continue;
+        }
+
+        if (!objExists($refNodes[$i])) {
+            // the ref node doesn't exist, so skip
+            continue;
+        }
+
+        file -cleanReference $refNodes[$i];
+    }
+
+    // now, get the depth of namepsaces
+    int $depth[];
+    int $max_depth = 0;
+    string $buffer[];
+    for ($i = 0; $i < size($namespaces); $i++) {
+        $depth[$i] = `tokenize $namespaces[$i] ":" $buffer`;
+        if ($depth[$i] > $max_depth) {
+            $max_depth = $depth[$i];
+        }
+    }
+
+    // remove the refnodes and namespaces
+    for ($d = $max_depth; $d > 0; $d--) {
+        for ($i = 0; $i < size($refNodes); $i++) {
+            if ($slices[$i] == $sl) {
+                // this asset is in the given slice, so skip
+                continue;
+            }
+
+            if ($namespaces[$i] == "stereoCam") {
+                // stereo camera is handled differently
+                continue;
+            }
+
+            if (!objExists($refNodes[$i])) {
+                // the ref node doesn't exist, so skip
+                continue;
+            }
+
+            if ($depth[$i] != $d) {
+                // this asset handled in a different depth sweep
+                continue;
+            }
+
+            string $fosterParent = "";
+            if (`objExists($refNodes[$i])`) {
+                file -removeReference -referenceNode $refNodes[$i];
+                $fosterParent = $refNodes[$i]+"fosterParent1";
+            }
+
+            // delete anything else in this namespace and then the namespace itself
+            deleteNamespace($namespaces[$i]);
+
+            if ($fosterParent != "" && `objExists($fosterParent)`) {
+                // deleting the reference created a fosterParent group, delete it as well
+                delete $fosterParent;
+            }
+        }
+    }
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc removeAssetsNotInStructureFile(string $namespaces[], string $refNodes[])
+{
+    print("Removing assets not in structure file\n");
+
+    // first, get all of the currently existing references not in the refNodes or namespaces list
+    string $badNamespaces[];
+    string $badRefNodes[];
+    string $refFiles[] = `file -q -r`;
+    for ($i = 0; $i < size($refFiles); $i++) {
+        int $okay = false;
+
+        string $file = `referenceQuery -f -wcn $refFiles[$i]`;
+        string $type = getPath("AssetTypeFromFilename", {$file});
+        if (!$okay && $type == "camera") $okay = true;
+        
+        string $rn = `referenceQuery -rfn $refFiles[$i]`;
+        if (!$okay && stringArrayContains($rn, $refNodes)) $okay = true;
+        
+        string $ns = `file -q -namespace $refFiles[$i]`;
+        string $parent_ns[] = `file -q -parentNamespace $refFiles[$i]`;
+        if (size($parent_ns) == 1 && $parent_ns[0] != "") {
+            if (stringArrayContains($parent_ns[0], $namespaces)) $okay = true;
+            
+            $ns = $parent_ns[0] + ":" + $ns;
+        }
+        if (!$okay && stringArrayContains($ns, $namespaces)) $okay = true;
+
+        if (!$okay) {
+            $badRefNodes[size($badRefNodes)] = $rn;
+            $badNamespaces[size($badNamespaces)] = $ns;
+        }
+    }
+
+    // now, clean all references to be deleted
+    for ($i = 0; $i < size($badRefNodes); $i++) {
+        file -cleanReference $badRefNodes[$i];
+    }
+
+    // now, get the depth of namepsaces
+    int $depth[];
+    int $max_depth = 0;
+    string $buffer[];
+    for ($i = 0; $i < size($badNamespaces); $i++) {
+        $depth[$i] = `tokenize $badNamespaces[$i] ":" $buffer`;
+        if ($depth[$i] > $max_depth) {
+            $max_depth = $depth[$i];
+        }
+    }
+
+    // remove the refnodes and namespaces
+    for ($d = $max_depth; $d > 0; $d--) {
+        for ($i = 0; $i < size($badRefNodes); $i++) {
+            if ($depth[$i] != $d) {
+                // this asset handled in a different depth sweep
+                continue;
+            }
+
+            string $fosterParent = "";
+            if (`objExists($badRefNodes[$i])`) {
+                file -removeReference -referenceNode $badRefNodes[$i];
+                $fosterParent = $badRefNodes[$i]+"fosterParent1";
+            }
+
+            // delete anything else in this namespace and then the namespace itself
+            deleteNamespace($badNamespaces[$i]);
+
+            if ($fosterParent != "" && `objExists($fosterParent)`) {
+                // deleting the reference created a fosterParent group, delete it as well
+                delete $fosterParent;
+            }
+        }
+    }
+}
+
+
+// -------------------------------------------------------------------------------------------------
+proc loadAssetsInThisSlice(string $sl, string $namespaces[], string $refNodes[], string $slices[])
+{
+    print("Loading assets in anim slice " + $sl + "\n");
+
+    for ($i = 0; $i < size($refNodes); $i++) {
+        if ($slices[$i] != $sl) {
+            // this asset is in a different slice, so skip
+            continue;
+        }
+
+        if (`objExists $refNodes[$i]`) {
+            print("Loading assets: " + $namespaces[$i] + "\n");
+            file -lr $refNodes[$i];
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc loadCameras()
+{
+    print("Loading cameras\n");
+
+    string $curfile = `file -q -exn`;
+    string $namespaces[], $refNodes[];
+    assetListFromMa($curfile, $namespaces, $refNodes, {}, {});
+
+    for ($i = 0; $i < size($refNodes); $i++) {
+        if (`objExists $refNodes[$i]`) {
+            string $filename = `referenceQuery -filename $refNodes[$i]`;
+            string $type = tolower(getPath("AssetTypeFromFilename", {$filename}));
+            if ($type == "camera") {
+                print("Loading cameras: " + $namespaces[$i] + "\n");
+                file -lr $refNodes[$i];
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc string getMasterCamera()
+{
+    string $cameras[] = findAssets({}, {"camera"});
+    for ($i = 0; $i < size($cameras); $i++) {
+        if (`objExists ($cameras[$i]+".masterCamera")`) {
+            int $isMaster = `getAttr ($cameras[$i]+".masterCamera")`;
+            if ($isMaster) {
+                return $cameras[$i];
+            }
+        }
+        else {
+            return $cameras[$i];
+        }
+    }
+    return "stereoCam:stereoCamera";
+}
+
+// ---------------------------------------------------------------------------------------------------
+proc cameraSetup(string $masterCam)
+{
+    if (!`referenceQuery -inr $masterCam`)
+        return;
+
+    string $refFile = `referenceQuery -filename $masterCam`;
+    string $phase = getPath ("AssetComponentFromFilename", {$refFile});
+    if ($phase != "ani" && $phase != "lay")
+        return;
+
+    // if the camera is locked, unlock - we can eventually remove this, but we are in a transitional phase towards discontuing the practice
+    // of locking the camera at the end of layout. Until we are done with this, we unlock here to make sure we are good before going into
+    // animation
+    unlockCamera($masterCam);
+
+    // Apply external stereo overrides
+    catch(eval("source \"stereoCameras\""));
+    catch(eval("stereoCameras.readShotSettingsFromPipeline"));
+}
+
+// -------------------------------------------------------------------------------------------------
+proc disconnectMasterCamera(string $masterCam)
+{
+    print("Disconnecting master camera\n");
+
+    unlockCamera($masterCam);
+
+    string $constraints[] = `listRelatives -path -allDescendents -type "constraint" $masterCam`;
+    for ($i = 0; $i < size($constraints); $i++) {
+        if (!`referenceQuery -inr $constraints[$i]`) {
+            delete $constraints[$i];
+        }
+    }
+
+    string $masterNamespace = getNamespaceFromString($masterCam);
+    string $cameraNodes[] = `listRelatives -path -allDescendents $masterCam`;
+    string $connections[] = `listConnections -source 1 -destination 0 -connections 1 -plugs 1 $cameraNodes`;
+    for ($j = 0; $j < size($connections); $j+=2) {
+        string $thisAttr = $connections[$j];
+        string $srcAttr = $connections[$j+1];
+        if (getNamespaceFromString($srcAttr) != $masterNamespace) {
+            disconnectAttr $srcAttr $thisAttr;
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+proc renameCameras(string $rename[])
+{
+    print("Renaming non-master cameras\n");
+
+    string $cameras[] = findAssets({}, {"camera"});
+    for ($i = 0; $i < size($cameras); $i++) {
+        string $cam = $cameras[$i];
+
+        string $namespace = getNamespaceFromString($cam);
+        int $index = stringArrayFindIndex($namespace, $rename);
+        if (($index % 2) == 0) {
+            if (`referenceQuery -inr $cam`) {
+                unlockCamera($cam);
+                string $reference = `referenceQuery -filename $cam`;
+                file -e -namespace $rename[$index+1] $reference;
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------------------------
+proc string getAudioPath (string $sequence, string $shot)
+{
+    string $exts[] = 
+    {
+        "aiff",
+        "aif",
+        "wav"
+    };
+
+    string $base = getPath ("AudioDir",{$sequence,$shot})+"/"+$sequence+"_"+$shot;
+    for ($i=0;$i<size($exts);$i++)
+    {
+        string $path = $base+"_dia."+$exts[$i];
+        if (`filetest -f $path`)
+            return $path;
+    }
+    return "";
+}
+
+// -----------------------------------------------------------------------------------------------
+proc switchAudio(string $sequence, string $shot)
+{  
+    string $audioPath = getAudioPath($sequence, $shot);
+    if ($audioPath == "")
+        print "Warning. No dialog audio file found.\n\n";
+    else
+    {
+        string $audioNode = "seq"+$sequence+"_"+$shot+"_audio";
+        if (`objExists $audioNode`)
+            setAttr -type "string" ($audioNode+".f") $audioPath;
+        else
+            print "Warning. No audio node was found.\n\n";
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Creates anim slice files using the shot's ani file and splits according to the shot's structure file
+// ---------------------------------------------------------------------------------------------------
+global proc string[] AnimSlicesMakeFiles(string $sequence, string $shot)
+{
+    global string $PA_switchToDialogOnlyAudio;
+    $PA_switchToDialogOnlyAudio = true;
+
+    global string $gAnimSlicesFilenameSuffix;
+    
+    // load plugins and source scripts
+    loadPlugins();
+
+    string $result[];
+
+    string $aniFile = getPath("ShotAniFile", {$sequence, $shot});
+    if (!`filetest -f $aniFile`) {
+        print("Error: the ani file does not exist.\n");
+        return $result;
+    }
+
+    string $namespaces[], $refNodes[], $cachefiles[], $slices[], $sliceNames[];
+
+    AnimSlicesAssetListFromStructureFile($sequence, $shot,
+            $namespaces, {}, {}, $refNodes, $cachefiles, $slices, $sliceNames);
+
+    // find the slice that contains the master camera
+    string $masterCam = getMasterCamera();
+    string $cameraSlice = "";
+    int $index = stringArrayFindIndex(getNamespaceFromString($masterCam), $namespaces);
+    if ($index != -1) {
+        $cameraSlice = $slices[$index];
+    }
+
+    // determine the slice to put the assets that are not in the structure file
+    // the chars slice is the extras slice if it exists, otherwise use the first slice
+    int $extrasSliceIndex = 0;
+    int $index = stringArrayFindIndex("chars", $sliceNames);
+    if ($index != -1) {
+        $extrasSliceIndex = $index;
+    }
+
+    string $rename[] = { "cameraBoomRig", "dupeCam" };
+
+    // for each slice, copy the original and swap out assets for cache
+    for ($i = 0; $i <= size($sliceNames); $i++) {
+        string $sl = $sliceNames[$i];
+        if ($sl == "") continue;
+
+        $result[size($result)] = $sl;
+
+        string $slFile = getPath("ShotFile", {$sequence, $shot, "ani", $sl});
+
+        if ($gAnimSlicesFilenameSuffix != "") {
+            $slFile = substitute("(\.ma)", $slFile, "." + $gAnimSlicesFilenameSuffix + ".ma");
+        }
+
+        print ("cp "+$aniFile+" "+$slFile+"\n");
+        sysFile -cp $slFile $aniFile;
+
+        if (`filetest -f $slFile`) {
+            // open the file with all references deferred
+            file -force -open -lrd "none" $slFile;
+
+            // now load the references that are in this slice
+            loadAssetsInThisSlice($sl, $namespaces, $refNodes, $slices);
+
+            // now load all of the cameras
+            loadCameras();
+
+            // set the seq, shot, and slice attributes
+            fileInfo "sequence" $sequence;
+            fileInfo "shot" $shot;
+            fileInfo "animslice" $sl;
+
+            // add a script node to run the cache sync script on open
+            scriptNode -n "rfxAnimSlicesFileOpen" -scriptType 1 -beforeScript "AnimSlicesFileOpen";
+            lockNode "rfxAnimSlicesFileOpen";
+
+            if ($sl == $cameraSlice) {
+                // this is the slice with the master camera, so set it up
+                cameraSetup($masterCam);
+            }
+            else {
+                // this is not the slice with the master camera, so disconnect master camera and rename others
+                disconnectMasterCamera($masterCam);
+                renameCameras($rename);
+            }
+
+            // remove the assets in other slices for
+            removeAssetsInOtherSlices($sl, $namespaces, $refNodes, $slices);
+
+            // remove the assets not in the structure file if this isn't the extras slices
+            if ($i != $extrasSliceIndex) {
+                removeAssetsNotInStructureFile($namespaces, $refNodes);
+            }
+
+            // now run the regular sync to pull in cache from other slices
+            AnimSlicesSyncCaches($sequence, $shot, $sl);
+
+            // Switch audio if global variable is set and dialog only exists
+            if ($PA_switchToDialogOnlyAudio)
+                switchAudio($sequence, $shot);
+            
+            // If there is a custom actions script for PreAnimation, call it
+			if (`exists "preAnimationCustomActions"`)
+				catch (`eval "preAnimationCustomActions"`);
+			
+            // save the file with the changes
+            file -force -save -type "mayaAscii" -options "v=0";
+
+            $result[size($result)] = $slFile;
+        }
+        else {
+            print("Error copying the file\n");
+            $result[size($result)] = "";
+        }
+    }
+    print("Done making anim slices files.\n");
+    // clear out maya
+    file -f -new;
+
+    return $result;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Deletes cached rigs from the currently opened file
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesDeleteCachedRigs(string $namespaces[], string $refNodes[])
+{
+    // load plugins and source scripts
+    loadPlugins();
+
+    // get the namespaces of caches currently in the file
+    string $current_ns[];
+    getCurrentAlembicCacheNamespaces($current_ns);
+
+    for ($i = 0; $i < size($current_ns); $i++)
+    {
+        string $ns = $current_ns[$i];
+        if ($ns != "stereoCam")
+        {
+            int $index = stringArrayFindIndex($ns, $namespaces);
+            if ($index >= 0)
+            {
+                if (`objExists $refNodes[$index]`)
+                {
+                    /* deal with the unpleasant possibility of a guest and rig being present at the same time. This will mean that the master node
+                    will not have a unique name - so we have find the one which is the guest.
+                    */
+                    string $node[] = `ls ($ns+" :master")`;
+                    for ($j = 0; $j < size($node); $j++) {
+                        if (!`referenceQuery -inr $node[$j]`) {
+                            string $nodeShape = $node[$j] + "Shape";
+                            if (size(`listRelatives -s -ni -pa -type "rfxAlembicMeshGpuCache" $node[$j]`)) {
+                                delete ($node[$j]);
+                            }
+                            else if (objExists($nodeShape) && size(`listConnections -type "rfxAlembicMeshCache" $nodeShape`)) {
+                                delete ($node[$j]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Forces the state of visibility and colorMode for all cache nodes in the currently opened file
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesForceAllCaches(int $visibility, int $colorMode)
+{
+    // load plugins and source scripts
+    loadPlugins();
+
+    // get the namespaces of caches currently in the file
+    string $current_ns[];
+    getCurrentAlembicCacheNamespaces($current_ns);
+    for ($i = 0; $i < size($current_ns); $i++)
+    {
+        string $ns = $current_ns[$i];
+        if ($ns != "stereoCam")
+        {
+            string $node = $ns+":master";
+            string $protected[] = attributeProtect.getProtectedAttributes($node);
+            if (!stringArrayContains("visibility", $protected)) {
+                setAttr ($node+".visibility") $visibility;
+            }
+
+            string $cacheNodes[];
+            string $types[] = { "rfxAlembicMeshCache", "rfxAlembicMeshGpuCache" };
+            getAlembicCachesOfType($cacheNodes, $types, ($ns+":*"));
+            for ($j = 0; $j < size($cacheNodes); $j++)
+            {
+                setAttr ($cacheNodes[$j]+".colorsMode") $colorMode;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Turn on and off the drawing of alembic gpu caches
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesSetGpuCacheDisplay(int $on)
+{
+    loadAlembicPlugin();
+    utilRfxAlembicCache -gpu $on;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Set the state of the highQualityGraphics attribute for all mesh gpu cache nodes in the currently opened file
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesSetHQGraphicsAllCaches(int $hqMode)
+{
+    loadPlugins();
+
+    // get all of the mesh gpu cache nodes
+    string $cacheNodes[];
+    string $types[] = { "rfxAlembicMeshGpuCache" };
+    getAlembicCachesOfType($cacheNodes, $types, "");
+    for ($j = 0; $j < size($cacheNodes); $j++)
+    {
+        setAttr ($cacheNodes[$j]+".highQualityGraphics") $hqMode;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Updates all cache nodes in the currently opened file
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesUpdateAllCaches()
+{
+    waitCursor -st true;
+    
+    loadPlugins();
+
+    // get the sequence and shot from the filename
+    string $filename = `file -q -exn`;
+    string $seq = getPath ("SequenceFromFilename",{$filename});
+    string $shot = getPath ("ShotFromFilename",{$filename});
+
+    // get the slice from the fileInfo
+    string $info[] = `fileInfo -q "animslice"`;
+    string $slice = $info[0];
+
+    if ($seq != "" && $shot != "" && $slice != "")
+    {
+        AnimSlicesSyncCaches($seq, $shot, $slice);
+    }
+    else
+    {
+        warning ("AnimSlicesUpdateAllCaches: Couldn't determine sequence, shot and slice from filename. Skipping...\n");
+    }
+
+    string $caches[];
+    getAlembicAllCaches($caches);
+    for ($node in $caches) {
+        if (`objExists ($node+".forceReload")`) {
+            setAttr ($node+".forceReload") 1;
+        }
+    }
+
+    waitCursor -st false;
+}
+
+
+// -----------------------------------------------------------------------------------------------
+proc string generateAnimSlicesCacheTempLocation( string $basePath)
+{
+    string $stamp = eval ("systemTime -asTimeStamp");
+    string $loc =  $basePath +"/"+`getpid`+"_"+$stamp;
+    sysFile -makeDir $loc;
+    return $loc;
+}
+
+// -----------------------------------------------------------------------------------------------
+proc int needsUpdate (string $liveFile, string $archiveFile)
+{
+    // First does the archive file exist?
+    if (!`filetest -f $archiveFile`)
+        return true;
+
+    // Check file size
+    // Note: fileQuery returns in prespecified order, not in the order of the flags.
+    string $cmd = "fileQuery -sz \""+$liveFile+"\"";
+    int $liveData[] = eval ($cmd);
+
+    $cmd = "fileQuery -sz \"" + $archiveFile + "\"";
+    int $archiveData[] = eval ($cmd);
+
+    int $liveSum = $liveData[0];
+    int $archiveSum = $archiveData[0];
+
+    // Do the file sizes match.
+    if ($liveSum != $archiveSum)
+        return true;
+
+    return false;
+}
+
+// -----------------------------------------------------------------------------------------------
+proc int moveAnimSlicesFile (string $sourcePath, string $targetPath, string $filename, int $verbose)
+{
+    int $copy_max_tries = 5;
+
+    $sourcePath += $filename;
+    $targetPath += $filename;
+
+    int $success = 0;
+    if (`filetest -f $sourcePath`)
+    {
+        if ($verbose) print ("Moving " + $sourcePath + " -> " + $targetPath + "\n");
+        for ($j = 0; $j < $copy_max_tries; $j++)
+        {
+            if ($j > 0 && $verbose) print ("Retrying...\n");
+            if ($verbose) print ("cp " + $sourcePath + " " + $targetPath + "\n");
+
+            sysFile -cp $targetPath $sourcePath;
+            if (!needsUpdate($sourcePath, $targetPath))
+            {
+                $success = 1;
+                break;
+            }
+        }
+    }
+    return $success;
+}
+
+// -----------------------------------------------------------------------------------------------
+proc moveAnimSlicesCache (string $sourceDir, string $targetDir,
+        string $namespaces[], string $exportVersions[], int $verbose)
+{
+    for ($i = 0; $i < size($namespaces); $i++)
+    {
+        string $ns = $namespaces[$i];
+        string $vers = $exportVersions[$i];
+
+        string $sourcePath = $sourceDir + "/";
+        string $targetPath = $targetDir + "/" + $ns;
+        if ($vers == "local") {
+            $targetPath += "/local/";
+        }
+        else {
+            $targetPath += "/versions/" + $vers + "/";
+        }
+
+        if (!`filetest -d $targetPath`)
+            sysFile -md $targetPath;
+
+        moveAnimSlicesFile($sourcePath, $targetPath, $ns + ".abc", $verbose);
+        moveAnimSlicesFile($sourcePath, $targetPath, $ns + "_controls.abc", $verbose);
+        moveAnimSlicesFile($sourcePath, $targetPath, $ns + "_assembly.xml", $verbose);
+
+        if ($vers != "local") {
+            string $lnCmd = "ln -sfT";
+            $lnCmd += " versions/"+ $vers + "/";
+            $lnCmd += " " + $targetDir + "/" + $ns + "/latest";
+            if ($verbose) print($lnCmd + "\n");
+            exec($lnCmd);
+        }
+    }
+}
+// ---------------------------------------------------------------------------------------------------
+global proc int AnimSlicesIncludeObjectInExport(string $object, string $ignoreAttr, string $replaceAttr, string $visibilityAttr)
+{
+    string $objIgnoreAttr = $object + "." + $ignoreAttr;
+    if (`objExists $objIgnoreAttr` && `getAttr $objIgnoreAttr` == 1)
+        return false;
+
+    string $objReplaceAttr = $object + "." + $replaceAttr;
+    if (`objExists $objReplaceAttr`) {
+        string $source[] = `listConnections -s 1 -d 0 $objReplaceAttr`;
+        if (size($source)) {
+            $object = $source[0];
+        }
+    }
+
+    string $objVisibilityAttr = $object + "." + $visibilityAttr;
+    if (`objExists $objVisibilityAttr`) {
+        // the visibilty attribute is on this node, so return the value if it is off (0) or on (1)
+        int $sliceVis = `getAttr $objVisibilityAttr`;
+        if ($sliceVis == 0 || $sliceVis == 1) {
+            return $sliceVis;
+        }
+    }
+
+    // no visibility attribute or it is set to something other than 0 or 1, so use regular vis checking
+    if (nodeType($object) == "transform") {
+        // check starting at the first shape
+        string $shapes[] = `listRelatives -path -fullPath -shapes $object`;
+        if (size($shapes) > 0) {
+            $object = $shapes[0];
+        }
+    }
+    return isVisible2($object, 1, 1, 0, 0, 0);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Export cache for the given rigs in the currently opened file
+// ---------------------------------------------------------------------------------------------------
+global proc AnimSlicesExportCache(string $cache_output_dir, int $frameStart, int $frameEnd,
+        string $namespaces[], string $exportVersions[], int $exportControls,
+        string $component, string $printPrefix)
+{
+    loadPlugins();
+
+    int $verbose = 0;
+    if ($printPrefix != "")
+    {
+        $verbose = 1;
+    }
+
+    if ($verbose) print ($printPrefix + ": Starting export ("+(size($namespaces))+" namespaces)...\n");
+
+    // generate a temp location for anim slice cache export
+    if ($verbose) print ($printPrefix + ": Creating temp directory for anim slices cache export...\n");
+    string $temp_cache_base = getenv("TMPDIR") + "/animSlicesCache";
+    string $temp_cache_output = generateAnimSlicesCacheTempLocation($temp_cache_base);
+    if ($verbose) print ($printPrefix + ": Created "+$temp_cache_output+"\n");
+
+    string $sets[], $props[], $phases[];
+    int $propsPerSet[];
+    SetAssemblyUtilities.getSetsAndProps($sets, $propsPerSet, $props, $phases);
+    string $export_sets[], $export_sets_vers[];
+    string $export_ns[];
+    string $export_vers[];
+
+    loadAlembicPlugin();
+
+    string $ignoreAttr = "sliceIgnore";
+    string $visibilityAttr = "sliceVisibility";
+    string $replaceAttr = "sliceReplaceVisibility";
+
+
+    // build the command
+    string $exportCmd = "exportRfxAlembicCache";
+    //$exportCmd += " -verbose";
+    //$exportCmd += " -defaultColor 0.5 0.5 0.5 1.0";
+    //$exportCmd += " -noColor";
+    //$exportCmd += " -noNormals";
+    $exportCmd += " -noTransparent 0.0";
+    //$exportCmd += " -tesselationParams 1 2 2";
+    $exportCmd += " -tesselationAttrs sliceTessParmType sliceTessNumUParms sliceTessNumVParms";
+    //$exportCmd += " -wrapInTransform";
+    //$exportCmd += " -includeHidden";
+    $exportCmd += " -ignoreAttr " + $ignoreAttr;
+    $exportCmd += " -replaceVisAttr " + $replaceAttr;
+    $exportCmd += " -visibilityAttr " + $visibilityAttr;
+    //$exportCmd += " -zipCompression 9";
+    $exportCmd += " -s "+$frameStart+" -e "+$frameEnd;
+
+    int $numAlembicOutputParams = 0;
+
+    for ($n = 0;$n < size($namespaces); $n++)
+    {
+        string $ns = $namespaces[$n];
+        if ($ns == "stereoCam") {
+            if (!objExists("stereoCam:stereoCamera")) {
+                print("Error: could not find the asset stereoCam:stereoCamera\n");
+                continue;
+            }
+
+            $numAlembicOutputParams++;
+            $exportCmd += "\n -o \"" + $temp_cache_output + "/" + $ns + ".abc\"";
+            $exportCmd += " -camera \"stereoCam:stereoCamera\"";
+            $export_ns[size($export_ns)] = $ns;
+            $export_vers[size($export_vers)] = $exportVersions[$n];
+        }
+        else {
+            string $cur_master = $ns + ":master";
+
+            if (!objExists($cur_master)) {
+                print("Error: could not find the asset " + $cur_master + "\n");
+                continue;
+            }
+
+            // special handling if this is a set or member of a set
+            if (stringArrayContains($ns, $sets)) {
+                // save for later and export as a set
+                $export_ns[size($export_ns)] = $ns;
+                $export_vers[size($export_vers)] = $exportVersions[$n];
+                $export_sets[size($export_sets)] = $ns;
+                $export_sets_vers[size($export_sets_vers)] = $exportVersions[$n];
+                continue;
+            }
+            int $index = stringArrayFindIndex($ns, $props);
+            if ($index > -1 && $phases[$index] == "base") {
+                // skip any set members in the base state
+                continue;
+            }
+
+            $numAlembicOutputParams++;
+			string $pointCacheGeo[] = AnimSlicesGetSliceExportGeom ($ns);
+            //string $pointCacheGeo[] = getPointCacheGeometry( {$ns} );
+            $exportCmd += "\n -o \"" + $temp_cache_output + "/" + $ns + ".abc\"";
+            $exportCmd += " \"" + $cur_master;
+
+            // check for the type of the asset, if it is a character, don't export normals
+            string $cur_master_type_attr = $cur_master + ".character";
+            if (objExists($cur_master_type_attr)) {
+                string $cur_master_type = `getAttr $cur_master_type_attr`;
+                if ($cur_master_type == "character") {
+                    $exportCmd += " -noNormals";
+                }
+            }
+
+            $exportCmd += "\" \"";
+
+            int $renderRes = 1;
+            string $renderResAttr = $cur_master+".res";
+            if (`objExists $renderResAttr`) {
+                $renderRes = `getAttr $renderResAttr`;
+            }
+
+            if ($component == "lay" || $renderRes == 0 || size($pointCacheGeo) == 0) {
+                if (AnimSlicesIncludeObjectInExport($cur_master, $ignoreAttr, $replaceAttr, $visibilityAttr))
+                    $exportCmd += $cur_master + "...";
+            }
+            else {
+                for ($i = 0; $i < size($pointCacheGeo); $i++)
+                {
+                    if (AnimSlicesIncludeObjectInExport($pointCacheGeo[$i], $ignoreAttr, $replaceAttr, $visibilityAttr))
+                        $exportCmd += " " + $pointCacheGeo[$i];
+                }
+            }
+            $exportCmd += "\"";
+
+            if ($exportControls) {
+                string $controls[] = buildExportControlList( { $cur_master } );
+                if (size($controls) > 0) {
+                    $exportCmd += "\n -o \"" + $temp_cache_output + "/" + $ns + "_controls.abc\"";
+                    $exportCmd += " -transform \"";
+                    for ($i = 0; $i < size($controls); $i++)
+                    {
+                        $exportCmd += " " + $controls[$i];
+                    }
+                    $exportCmd += "\"";
+                }
+            }
+            $export_ns[size($export_ns)] = $ns;
+            $export_vers[size($export_vers)] = $exportVersions[$n];
+        }
+    }
+
+
+    if ($numAlembicOutputParams > 0) {
+        if ($verbose) print($exportCmd+ "\n");
+
+        float $st = `timerX`;
+        eval ($exportCmd);
+        if ($verbose) print ($printPrefix + ": Export complete. Elapsed time "+(`timerX -st $st`)+" seconds.\n");
+    }
+    else {
+        if ($verbose) print ($printPrefix + ": No alembic caches to export.\n");
+    }
+
+    if (size($export_sets) > 0) {
+        if ($verbose) print ($printPrefix + ": Exporting set assembly caches.\n");
+        for ($i = 0; $i < size($export_sets); $i++) {
+            string $ns = $export_sets[$i];
+            string $vers = $export_sets_vers[$i];
+            string $xml = SetAssemblyUtilities.makeXML($ns, $vers);
+            if ($xml != "") {
+                writeFile($temp_cache_output + "/" + $ns + "_assembly.xml", $xml);
+            }
+            else {
+                print("Error generating the set assembly xml for " + $ns + "\n");
+            }
+        }
+    }
+
+    if ($verbose) print ($printPrefix + ": Moving anim slices cache files.\n");
+    moveAnimSlicesCache($temp_cache_output, $cache_output_dir, $export_ns, $export_vers, $verbose);
+    rm_dir($temp_cache_base);
+
+
+    if ($verbose) print ($printPrefix + ": DONE.\n\n");
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Return a list of all of the latest cache filenames that are used by a given slice.  This can be used
+// to fill out a manifest file.
+// ---------------------------------------------------------------------------------------------------
+global proc string[] AnimSlicesGetCacheFilenames(string $sequence, string $shot, string $slice)
+{
+    loadPlugins();
+
+    string $sliceNames[];
+    int $namespacesInSlice[];
+    string $namespaces[];
+    int $reserved[];
+    AnimSlicesGetSlices($sequence, $shot, $sliceNames, $namespacesInSlice, $namespaces, $reserved);
+
+    string $cacheDir = getPath("AnimSlicesCacheDir", {$sequence, $shot});
+
+    string $base, $path;
+    string $results[];
+    int $index = 0;
+    for ($s = 0; $s < size($sliceNames); $s++) {
+        int $count = $namespacesInSlice[$s];
+        if ($sliceNames[$s] != $slice) {
+            for ($n = 0; $n < $count; $n++) {
+                if (!$reserved[$index + $n]) {
+                    string $ns = $namespaces[$index + $n];
+                    $base = $cacheDir + "/" + $ns + "/latest/" + $ns;
+                    $path = $base + ".abc";
+                    if (`filetest -f $path`) $results[size($results)] = $path;
+                    $path = $base + "_assembly.xml";
+                    if (`filetest -f $path`) $results[size($results)] = $path;
+                }
+            }
+        }
+        $index += $count;
+    }
+
+    return $results;
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+proc convertVariantCacheToPrevis(string $timeNode, string $controlGroup, string $namespace,
+        string $masterType, string $masterName, string $variantName)
+{
+    print("Converting Cache to Previs for " + $namespace + "\n");
+    
+    string $masterNode = $namespace + ":master";
+    string $lsResult[] = `ls -type "rfxAlembicMeshGpuCache" ($namespace + ":*")`;
+    if (size($lsResult) < 1) {
+        print ("Could not find a cache node for " + $namespace + "\n");
+        return;
+    }
+    
+    string $cacheNode = $lsResult[0];
+    string $filename_attr = $cacheNode + ".filename";
+    string $filename = getAttr($filename_attr);
+    if ($filename == "") {
+        print ("Cache didn't have a current filename.\n");
+        return;
+    }
+    string $namespaces[] = stringToStringArray($namespace, ":");
+    string $control_filename = substitute ("(\.abc)",$filename,"_controls.abc");
+
+    string $control = $namespaces[size($namespaces)-1] + ":MoveScaleRotate";
+    string $importResult[] = `importRfxAlembicCache -nodePath $control -timeNode $timeNode -parent $controlGroup $control_filename`;
+    if (size($importResult) == 0) {
+        print ("Failed to import MSR control.\n");
+        return;
+    }
+    string $controlNode = $namespace + ":MoveScaleRotate";
+    unlockTransform($masterNode);
+    parentConstraint $controlNode $masterNode;
+
+    string $previs_cachefile = getPath("AssetAbcLiveCache", {$masterType, $variantName});
+    if (!`filetest -f $previs_cachefile`) {
+        print("The previs cache file does not exist " + $previs_cachefile + "\n");
+        return;
+    }
+    setAttr $filename_attr -type "string" $previs_cachefile;
+
+    string $cur_ns = `namespaceInfo -cur -an`;
+    namespace -set $namespaces[size($namespaces)-1];
+    
+    string $args = "'" + $masterType + "', '" + $masterName + "', '" + $variantName + "', '" + $masterNode + "'";
+    python("import auto_variants; auto_variants.sync_and_apply_variant_for_shot_guest(" + $args + ")");
+
+    namespace -set $cur_ns;
+}
+
+// ---------------------------------------------------------------------------------------------------
+proc applyPrevisSettings(string $shot_namespace, string $namespaces[], string $channelCacheFile, string $variantSettingsFile)
+{
+    if (`filetest -f $channelCacheFile`) {
+        if (!`pluginInfo -q -l "animCache"`)
+            loadPlugin "animCache";
+        // get the first frame of the channel cache
+        int $start = `animCache -q -cs -c $channelCacheFile`;
+
+        // build the command to execute from the namespaces
+        string $animCacheCmd = "animCache -s " + $start + " -e " + $start + " -setAttr -exactReplace\n";
+        for ($ns in $namespaces) {
+            $animCacheCmd += "   -r \"" + $ns + ":master\" \"" + $shot_namespace + ":" + $ns + ":master\" \n";
+        }
+        $animCacheCmd += " -c \"" + $channelCacheFile + "\";\n";
+
+        print($animCacheCmd);
+        eval($animCacheCmd);
+    }
+
+    if (`filetest -f $variantSettingsFile`) {
+        string $xml = readXML($variantSettingsFile, 0);
+        string $variantSettingsXML[] = xml_getTag($xml, "asset");
+        for ($i = 0; $i < size($variantSettingsXML); $i++) {
+            string $ns = xml_getVar($variantSettingsXML[$i], "namespace");
+            if (stringArrayContains($ns, $namespaces)) {
+                string $attributes[] = xml_getTag($variantSettingsXML[$i], "attribute");
+                for ($attr in $attributes) {
+                    string $attrName = xml_getVar($attr, "name");
+                    string $attrValue = xml_getVar($attr, "value");
+                    string $nsAttrName = $shot_namespace + ":" + $ns + ":" + $attrName;
+                    if (objExists($nsAttrName)) {
+                        if (!`getAttr -lock $nsAttrName`) {
+                            if (catch(setAttr($nsAttrName, float($attrValue)))) {
+                                print("There was an error setting the value of " + $nsAttrName + " to " + $attrValue + "\n");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Imports cache nodes in order to build a complete shot from cache
+// ---------------------------------------------------------------------------------------------------
+global proc string AnimSlicesBuildShotFromCaches(string $sequence, string $shot,
+        string $shot_namespace, string $parent, string $timeNode, string $centerOnSetNamespace,
+        string $includeNamespaces[], string $ignoreNamespaces[], string $loadVariantsAsPrevis)
+{
+    print("Syncing anim slices cache files for " + $sequence + " " + $shot + "\n");
+    
+    loadPlugins();
+
+    string $variantChildData[], $variantMasterData[];
+    string $variantChannelCache = "", $variantSettingsFile = "";
+    if ($loadVariantsAsPrevis) {
+        if (!`pluginInfo -q -l "parseAssetdb"`)
+            loadPlugin "parseAssetdb";
+
+        // get the asset db information
+        string $assetdb = getPath ("ProjectGlobals",{})+"/assetdb.xml";
+        if (!`filetest -f $assetdb`) {
+            print("The asset db file does not exist " + $assetdb + "\n");
+            return {};
+        }
+        $variantChildData = `parseAssetdb -filter "variantChild" $assetdb`; // returns interleaved data in this order: name,type,parent asset
+        $variantMasterData = `parseAssetdb -filter "variantMaster" $assetdb`; // returns interleaved data in this order: name,type
+
+        // get the current channel cache file
+        $variantChannelCache = getPath("ChannelCacheDir",{$sequence,$shot}) + "/cache.bcf";
+        // get any current variant settings for the shot
+        $variantSettingsFile = getPath("ShotInfoDir",{$sequence,$shot}) + "/" + $sequence + "_" + $shot + "_variantSettings.xml";
+    }
+
+    // get the contents of the structure file
+    string $namespaces[], $assetTypes[], $assetNames[];
+    string $refNodes[], $cachefiles[], $slices[], $sliceNames[];
+    
+    AnimSlicesAssetListFromStructureFile($sequence, $shot,
+            $namespaces, $assetTypes, $assetNames,
+            $refNodes, $cachefiles, $slices, $sliceNames);
+
+    string $sets[], $props[];
+    int $propsPerSet[];
+    string $strucfile = getStructureFile($sequence, $shot);
+    SetAssemblyUtilities.getSetsAndPropsFromStructureFile($strucfile, $sets, $propsPerSet, $props, {});
+
+
+    string $shot_desc = "shot_" + $sequence + "_" + $shot;
+
+    if ($shot_namespace == "") {
+        $shot_namespace = $shot_desc;
+        namespace -add $shot_namespace;
+    }
+
+    if ($parent == "") {
+        $parent = `group -empty -world -name ($shot_desc+"_GRP")`;
+    }
+
+    string $controlGroup = "";
+    if ($loadVariantsAsPrevis) {
+        $controlGroup = `group -empty -parent $parent -name "controls_GRP"`;
+        $controlGroup = $parent + "|" + $controlGroup;
+    }    
+    
+    string $cur_ns_prefix = "";
+    string $cur_ns = `namespaceInfo -cur`;
+    if ($cur_ns != ":") {
+        $cur_ns = ":" + $cur_ns;
+        $cur_ns_prefix = $cur_ns + ":";
+    }
+    
+    // set the current namespace to make sure the cache namespaces are unique, so that multiple shots can be built
+    namespace -set $shot_namespace;
+    
+
+    if ($timeNode == "") {
+        // none given, so use the default time node attribute
+        $timeNode = "time1.outTime";
+    }
+
+    string $centerOnMatrix = "";
+    string $set_ns[];
+    string $previs_namespaces[];
+    for ($i = 0; $i < size($namespaces); $i++)
+    {
+        if ($namespaces[$i] == $centerOnSetNamespace) {
+            if (endString($cachefiles[$i], 13) == "_assembly.xml") {
+                $centerOnMatrix = getSetAssemblyTopTransform($cachefiles[$i], $sequence, $shot, $namespaces[$i]);
+            }
+        }
+
+        if (size($includeNamespaces) != 0 && !stringArrayContains($namespaces[$i], $includeNamespaces)) {
+            // skip loading since it is not in the included slices
+            continue;
+        }
+        
+        if (stringArrayContains($namespaces[$i], $ignoreNamespaces)) {
+            // skip loading since it is marked as ignore
+            continue;
+        }
+        
+        if (stringArrayContains($namespaces[$i], $props)) {
+            // don't load set props, it will happen when the set gets syncd
+            continue;
+        }
+
+        if (endString($cachefiles[$i], 13) == "_assembly.xml") {
+            // save this set namespace to update later
+            $set_ns[size($set_ns)] = $namespaces[$i];
+        }
+        
+        print("Found missing cache: adding " + $shot_desc+":"+$namespaces[$i] + "\n");
+
+        // if we encounter double namespaces - omit with a warning.
+        if (size(stringToStringArray($namespaces[$i],":")) > 1) {
+            warning ("Encountered invalid namespace "+$namespaces[$i]+" for cache "+$cachefiles[$i]+". Skipping...");
+            continue;
+        }
+        if (!`filetest -f $cachefiles[$i]`) {
+            warning ("Cache file "+$cachefiles[$i]+" is missing. Skipping...");
+            continue;
+        }
+
+
+        string $ext = endString($cachefiles[$i], 4);
+        if ($ext == ".abc") {
+            importCache($slices[$i], $namespaces[$i], $refNodes[$i], $cachefiles[$i], $parent, $timeNode, false);
+            
+            if ($loadVariantsAsPrevis) {
+                string $masterName = "";
+                // first see if it is a variant master
+                if (stringArrayContains($assetNames[$i], $variantMasterData)) {
+                    $masterName = $assetNames[$i];
+                }
+                else {
+                    // it's not a master, try looking it up as a variant child
+                    int $index = stringArrayFindIndex($assetNames[$i], $variantChildData);
+                    if ($index != -1) {
+                        $masterName = $variantChildData[$index+2];
+                    }
+                }
+
+                if ($masterName != "") {
+                    string $fullNamespace = $shot_namespace + ":" + $namespaces[$i];
+                    convertVariantCacheToPrevis($timeNode, $controlGroup, $fullNamespace,
+                                                $assetTypes[$i], $masterName, $assetNames[$i]);
+                    $previs_namespaces[size($previs_namespaces)] = $namespaces[$i];
+                }
+            }
+        }
+        else if ($ext == ".xml") {
+            importSetAssembly($slices[$i], $namespaces[$i], $cachefiles[$i], $parent);
+        }
+    }
+
+    if (size($previs_namespaces) > 0) {
+        applyPrevisSettings($shot_namespace, $previs_namespaces, $variantChannelCache, $variantSettingsFile);
+    }
+
+
+    // now sync the set assembly caches
+    for ($i = 0; $i < size($set_ns); $i++)
+    {
+        AnimSlicesSyncSetAssemblyCache($sequence, $shot, $set_ns[$i]);
+    }
+
+
+    if ($centerOnMatrix != "") {
+        unlockTransform($parent);
+        eval("xform -worldSpace -matrix "+$centerOnMatrix+" \""+$parent+"\";");
+        float $imat[] = getAttr($parent+".worldInverseMatrix");
+        xform -worldSpace -matrix $imat[0]  $imat[1]  $imat[2]  $imat[3] $imat[4]  $imat[5]  $imat[6]  $imat[7]
+                    $imat[8]  $imat[9]  $imat[10] $imat[11] $imat[12] $imat[13] $imat[14] $imat[15] $parent;
+        lockTransform($parent);
+    }
+
+    namespace -set $cur_ns;
+
+    print("Anim slice sync complete for " + $sequence + " " + $shot + "\n");
+
+    return $parent;
+}
+
+

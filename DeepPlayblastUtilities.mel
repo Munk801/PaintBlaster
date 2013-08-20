@@ -1,0 +1,551 @@
+// DeepPlayblastUtilities.mel (c) 2012 ReelFX Creative Studios
+// Verision 1.0
+// author: Michael Jefferies
+
+/*
+Description:
+	A collection of utility functions for deep playblasts:
+
+	DeepPlayblastMakeNamespaceRenderLayer
+		Prepare for deep playblast by making a namespace render layer
+
+    DeepPlayblastHandleGpuMeshRenderLayer
+        Handle gpu mesh nodes to treat them like they are in the render layer
+
+	DeepPlayblastMakeXML
+		Generate an xml string describing the deep playblast
+
+Dependancies:
+	getPath.mel
+	parseXML.mel
+	xml_parser plug-in
+	fileQuery plug-in
+	AnimSlicesUtilities.mel
+
+Documentation:
+
+Examples:
+
+Notes:
+
+
+Bugs:
+
+Original:   02/29/12
+Revisions:  05/22/12    Rev 1.0     mjefferies
+            - added the specification of a filename to use as the alternate movie file with deep
+              playblast tracks in it.
+
+            05/24/12    Rev 1.1     mjefferies
+            - modified to take a structure file rather than the seq/shot, so that an alternate
+              structure file can be given.
+
+            06/06/12    Rev 1.2     mjefferies
+            - added support for deep playblasting gpumeshes and added the phase to the xml data
+
+            07/19/12    Rev 1.3     mjefferies
+            - added export of the assigned supervisor and artist usernames for each slice
+
+            08/08/12    Rev 1.4     mjefferies
+            - added a hack to get around an issue in maya when creating the namespaces render layer
+
+            08/09/12	Rev 1.5	    hmichalakeas
+            - added a check to see if rfxAlembicMeshGpuCache type is present before ls -type ...
+
+            08/16/12    Rev 1.6     mjefferies
+            - added some robustness to deal with removing intermediate objects
+              that have been assigned to the initialShadingGroup
+
+            08/22/12	Rev 1.7	    hmichalakeas
+            - In DeepPlayblastMakeNamespaceRenderLayer, accounted for the possibility that lambert1 may have been mapped or otherwise adjusted.
+
+            08/24/12	Rev 1.8	   hmichalakeas
+            - Switched fallback strategy for when maya gives a syntax error when assigning a shader. New approach switches layer back to the
+            default render layer, unassigns then re-assigns the material assignments, switches to namespace layer and tries to assign the shader again.
+
+            08/30/12	Rev 1.9	   hmichalakeas
+            - Further tweaks to fallback shader assignment strategy
+
+            08/30/12	Rev 2.0	   hmichalakeas
+            - Switched to a more robust fallback shader assignment strategy (setup for shading group "hijacking" - see inline notes)
+
+            09/19/12    Rev 2.1     mjefferies
+            - Switched getting colors routine for deep playblast to use the same color for all props in a set.
+            
+            10/11/12	Rev 2.2	   hmichalakeas
+            - Switched to always using fallback shader assignment method (shading group hijack method)
+
+To-do's:
+		- Move to-do's to revisions as they are done
+*/
+// ---------------------------------------------------------------------------------------------------
+// source statements
+//
+
+// ---------------------------------------------------------------------------------------------------
+// global variables
+//
+// ---------------------------------------------------------------------------------------------------
+// load all plug-ins required for this mel script
+// ---------------------------------------------------------------------------------------------------
+proc loadPlugins()
+{
+	if (!`pluginInfo -q -l "xml_parser"`)
+		loadPlugin "xml_parser";
+	if (!`pluginInfo -q -l "fileQuery"`)
+		loadPlugin "fileQuery";
+
+	eval ("source \"parseXML.mel\";");
+	eval ("source \"AnimSlicesUtilities.mel\";");
+}
+// -------------------------------------------------------------------------------------------------
+global proc string[] stringArrayReverse (string $array[])
+{
+	string $result[];
+	int $s = size($array)-1;
+	for ($i=0;$i<=$s;$i++)
+		$result[$i] = $array[$s-$i];
+
+	return $result;
+}
+// -------------------------------------------------------------------------------------------------
+proc getNamespaceInfoFromStructureFile(string $strucfile,
+		string $namespaces[], string $paths[], string $versions[], string $types[],
+        string $phases[], string $masterCam[])
+{
+
+	clear $namespaces;
+	clear $paths;
+	clear $versions;
+	clear $types;
+    clear $phases;
+    clear $masterCam;
+
+	if (`filetest -f $strucfile`)
+	{
+		string $xml = readXML($strucfile, 0);
+		string $assetXML[] = xml_getTag($xml, "Asset");
+		for ($i = 0; $i < size($assetXML); $i++)
+		{
+			$namespaces[$i] = xml_getVar($assetXML[$i], "Namespace");
+			$paths[$i] = xml_getVar($assetXML[$i], "Path");
+			$versions[$i] = xml_getVar($assetXML[$i], "Version");
+			$types[$i] = xml_getVar($assetXML[$i], "AssetType");
+            $phases[$i] = xml_getVar($assetXML[$i], "Phase");
+            $masterCam[$i] = xml_getVar($assetXML[$i], "MasterCamera");
+		}
+	}
+	else {
+		print("Structure file "+$strucfile+" is missing.\n");
+	}
+}
+
+// -------------------------------------------------------------------------------------------------
+proc getRandomColors(string $namespaces[], vector $colors[], int $combineSetColors)
+{
+	clear $colors;
+
+	for ($i = 0; $i < size($namespaces); $i++)
+	{
+        string $namespace = $namespaces[$i];
+        if ($combineSetColors) {
+            if (gmatch($namespace, "*[:]*")) {
+                $namespace = getNamespaceFromString($namespace);
+            }
+        }
+
+		int $fq[] = `fileQuery -checksum -fromString $namespace`;
+		int $checksum = $fq[0];
+		seed "DeepPlayblast" $checksum;
+		float $r = `rand "DeepPlayblast" 1 25` / 25.0;
+		float $g = `rand "DeepPlayblast" 1 25` / 25.0;
+		float $b = `rand "DeepPlayblast" 1 25` / 25.0;
+		$colors[$i] = <<$r,$g,$b>>;
+	}
+}
+
+// -------------------------------------------------------------------------------------------------
+proc getColors(string $namespaces[], vector $colors[])
+{
+    int $combineSetColors = 1;
+    getRandomColors($namespaces, $colors, $combineSetColors);
+}
+
+// -------------------------------------------------------------------------------------------------
+// Switch to namespace materials for objects that needed the fallback method of material assignment (see notes in DeepPlayblastMakeNamespaceRenderLayer)
+// -------------------------------------------------------------------------------------------------
+global proc DeepPlayblastPushNamespaceMaterials()
+{
+	string $shadingGroups[] = `ls -type "shadingEngine"`;
+	for ($i=0; $i<size($shadingGroups);$i++) {
+		if (`objExists ($shadingGroups[$i]+".namespaceShader")`) {
+			string $nsShader[] = `listConnections -s 1 -d 0 ($shadingGroups[$i]+".namespaceShader")`;
+			if (size($nsShader) && !isConnected (($nsShader[0]+".outColor"),($shadingGroups[$i]+".surfaceShader"))) {
+				connectAttr -f ($nsShader[0]+".outColor") ($shadingGroups[$i]+".surfaceShader");
+			}
+		}
+	}
+}
+// -------------------------------------------------------------------------------------------------
+// Switch to normal materials for objects that needed the fallback method of material assignment (see notes in DeepPlayblastMakeNamespaceRenderLayer)
+// -------------------------------------------------------------------------------------------------
+global proc DeepPlayblastPopNamespaceMaterials()
+{
+	string $shadingGroups[] = `ls -type "shadingEngine"`;
+	for ($i=0; $i<size($shadingGroups);$i++) {
+		if (`objExists ($shadingGroups[$i]+".defaultShader")`) {
+			string $defaultShader[] = `listConnections -s 1 -d 0 ($shadingGroups[$i]+".defaultShader")`;
+			if (size($defaultShader) && !isConnected (($defaultShader[0]+".outColor"),($shadingGroups[$i]+".surfaceShader"))) {
+				connectAttr -f ($defaultShader[0]+".outColor") ($shadingGroups[$i]+".surfaceShader");
+			}
+		}
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// Prepare for deep playblast by making a namespace render layer
+// ---------------------------------------------------------------------------------------------------
+global proc string DeepPlayblastMakeNamespaceRenderLayer(string $strucfile, string $gpuMeshes[])
+{
+	loadPlugins();
+
+    // this code is a hack to get around a problem with render layers in maya
+    string $assigned[] = `sets -q "initialShadingGroup"`;
+    if (size($assigned))
+    {
+        string $defaultLambert = `shadingNode -asShader "lambert"`;
+	// account for the possibility of lambert1 having been adjusted, mapped, etc
+	string $attrs[] = `listAttr -s -k -se -r "lambert1"`;
+	for ($i=0;$i<size($attrs);$i++)
+	{
+		int $numChildAttrs[] = `attributeQuery -nc -n "lambert1" $attrs[$i]`;
+		string $plug[] = `listConnections -s 1 -d 0 -p 1 ("lambert1."+$attrs[$i])`;
+		if (size($plug)) {
+			connectAttr $plug[0] ($defaultLambert+"."+$attrs[$i]);
+		}
+		else if ($numChildAttrs[0] == 0) {
+			float $val = `getAttr ("lambert1."+$attrs[$i])`;
+			setAttr ($defaultLambert+"."+$attrs[$i]) $val;
+			// add parent attribute if any
+			string $parentAttr[] = `attributeQuery -lp -n "lambert1" $attrs[$i]`;
+			if (size($parentAttr) && stringArrayFindIndex ($parentAttr[0],$attrs) == -1) {
+				$attrs[size($attrs)] = $parentAttr[0];
+			}
+		}
+	}
+        string $shadingGroup = `sets -renderable true -noSurfaceShader true -empty`;
+        connectAttr -f ($defaultLambert+".outColor") ($shadingGroup+".surfaceShader");
+
+        for ($i = 0; $i < size($assigned); $i++) {
+            int $isObject = size(`ls -o $assigned[$i]`);
+            if ($isObject) {
+                if (catch (`sets -e -rm "initialShadingGroup" $assigned[$i]`)) {
+                    print("Problem removing " + $assigned[$i] + " from the initialShadingGroup\n");
+                }
+                else {
+                    sets -e -fe $shadingGroup $assigned[$i];
+                }
+            }
+        }
+    }
+
+	string $namespaces[];
+	vector $colors[];
+
+	getNamespaceInfoFromStructureFile($strucfile, $namespaces, {}, {}, {}, {}, {});
+	getColors($namespaces, $colors);
+
+    clear $gpuMeshes;
+
+	string $oldNamespace = `namespaceInfo -currentNamespace`;
+	string $oldRenderLayer = `editRenderLayerGlobals -q -currentRenderLayer`;
+	string $layer = "";
+
+	for ($i = 0; $i < size($namespaces); $i++)
+	{
+		string $namespace = $namespaces[$i];
+		if ($namespace == "stereoCam") continue;
+
+		if ($layer == "")
+		{
+			$layer = `createRenderLayer -makeCurrent -name "namespaceLayer"`;
+		}
+
+		if (catch(`namespace -set (":" + $namespace)`))
+		{
+			continue;
+		}
+
+		vector $color = $colors[$i];
+		float $r = $color.x;
+		float $g = $color.y;
+		float $b = $color.z;
+
+        select -replace `namespaceInfo -dp -lod`;
+        string $geom[] = `ls -sl -dag -visible -ni -type mesh -type nurbsSurface`;
+        string $gpuMesh[];
+        if (`objectType -tagFromType "rfxAlembicMeshGpuCache"` != 0) {
+            $gpuMesh = `ls -sl -dag -visible -long -type rfxAlembicMeshGpuCache`;
+        }
+
+        select -clear;
+
+        if (size($geom) > 0) {
+            string $material = `shadingNode -asShader surfaceShader`;
+            setAttr ($material+".outColor") -type double3 $r $g $b;
+            string $shader = `sets -renderable true -noSurfaceShader true -empty`;
+            connectAttr -f ($material+".outColor") ($shader+".surfaceShader");
+
+            for ($j = 0; $j < size($geom); $j++) {
+                string $existingShaders[] = `listConnections -destination true -source false
+                                                    -plugs false -type "shadingEngine" $geom[$j]`;
+                if (size($existingShaders) > 0) {
+                    editRenderLayerMembers $layer $geom[$j];
+
+                    int $retry = 0;
+                    // first try to set the shader in object mode
+                    $retry = 1;		// Use shading group hijack method for everything...
+                    //if (catch(`sets -noWarnings -forceElement $shader $geom[$j]`)) {
+                    //    $retry = 1;
+                    //}
+
+                    if ($retry == 1) {
+			// Couldn't assign shader. Various alternative approaches to assigning the shader have not worked 100% of the time.
+			// So add a couple of extra attributes to the shadingGroup - defaultShader and namespaceShader, and connect the respective
+			// shaders to these. During pushRenderLayer (PlayblastTool), check for the existence of the namespaceShader, and if present,
+			// find it's connection and plug it into the surfaceShader attribute, thus "hijacking" the shading group. During popRenderLayer,
+			// connect the attribute plugged into defaultShader and plug this back into the surfaceShader attribute. This is messy, but it
+			// sidesteps material assignment alltogether.
+
+			for ($k=0;$k<size($existingShaders);$k++) {
+			    if (!`objExists ($existingShaders[$k]+".defaultShader")`) {
+				addAttr -at "message" -ln "defaultShader" $existingShaders[$k];
+				string $defaultMat[] = `listConnections -s 1 -d 0 ($existingShaders[$k]+".surfaceShader")`;
+				if (size($defaultMat)) {
+				    connectAttr ($defaultMat[0]+".message") ($existingShaders[$k]+".defaultShader");
+				}
+
+				addAttr -at "message" -ln "namespaceShader" $existingShaders[$k];
+				connectAttr ($material+".message") ($existingShaders[$k]+".namespaceShader");
+			    }
+			}
+			$retry = 0;	// temp until we feel confident retiring the next section of code
+		    }
+
+                    // couldn't assign shader. Emergency fall-back: Switch back to defaultRenderLayer, unassign and re-assign the existing shaders, then
+		    // switch back to namespace layer and try again.
+                    if ($retry == 1)
+		    {
+			    print ("DeepPlayblastUtilities: Using alternate shader assignment strategy on "+$geom[$j]+"\n");
+
+			    $existingShaders = stringArrayReverse ($existingShaders);
+			    /*
+				To-do: Add an explanation about why reversing the shaders array is necessary once we've confirmed that we are good. -HM
+			    */
+
+			    // store the existing material assignments
+			    string $comps[];
+			    int $indices[];
+			    for ($k = 1;$k < size($existingShaders);$k++) {
+				$indices[$k-1] = size($comps);
+				string $assigned[] = `sets -q $existingShaders[$k]`;
+				for ($m = 0;$m < size($assigned);$m++) {
+					string $obj[] = `ls -o $assigned[$m]`;
+					if ($obj[0] == $geom[$j]) {
+						$comps[size($comps)] = $assigned[$m];
+					}
+				}
+			    }
+			    // unassign the existing materials
+			    for ($k=0;$k<size($existingShaders);$k++) {
+				    sets -e -rm $existingShaders[$k] $geom[$j];
+			    }
+
+			    if (catch(`sets -noWarnings -forceElement $shader $geom[$j]`)) {
+				    warning ("DeepPlayblastUtilities: Couldn't assign namespace shader to "+$geom[$j]);
+				    continue;
+			    }
+			    else {
+				    print ("DeepPlayblastUtilities: Alternate shader assignment worked for "+$geom[$j]+".\n");
+			    }
+
+			    // switch back to defaultRenderLayer
+			    editRenderLayerGlobals -currentRenderLayer "defaultRenderLayer";
+
+			    // and re-assign (assign first shader to whole object, then component assign subsequent shaders)
+			    sets -e -fe  $existingShaders[0] $geom[$j];
+			    for ($k=0;$k<size($indices);$k++) {
+				    int $end = ($k<size($indices)-1)?$indices[$k+1]:(size($comps));
+				    for ($m=$indices[$k];$m<$end;$m++) {
+					    sets -e -fe $existingShaders[$k+1] $comps[$m];
+				    }
+			    }
+			    // switch to namespace layer
+			    editRenderLayerGlobals -currentRenderLayer $layer;
+
+		    }
+                }	// end if size($existingShaders)
+            }
+        }
+
+        if (size($gpuMesh) > 0) {
+            for ($j = 0; $j < size($gpuMesh); $j++) {
+                editRenderLayerMembers $layer $gpuMesh[$j];
+                setAttr ($gpuMesh[$j]+".defaultColor") -type double3 $r $g $b;
+                $gpuMeshes[size($gpuMeshes)] = $gpuMesh[$j];
+            }
+        }
+	}
+
+	if ($layer != "")
+	{
+		namespace -set $oldNamespace;
+		editRenderLayerGlobals -currentRenderLayer $oldRenderLayer;
+	}
+
+	return $layer;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Handle gpu mesh nodes to treat them like they are in the render layer
+// ---------------------------------------------------------------------------------------------------
+global proc DeepPlayblastHandleGpuMeshRenderLayer(string $gpuMeshes[], int $on)
+{
+    int $lighting = ($on ? 0 : 1);
+    int $colorsMode = ($on ? 0 : 1);
+    for ($i = 0; $i < size($gpuMeshes); $i++) {
+        setAttr ($gpuMeshes[$i]+".lighting") $lighting;
+        setAttr ($gpuMeshes[$i]+".colorsMode") $colorsMode;
+    }
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+proc string getUserNameFromID(string $userID, string $idCache[], string $usernameCache[])
+{
+    int $index = stringArrayFindIndex($userID, $idCache);
+    if ($index >= 0) {
+        return $usernameCache[$index];
+    }
+
+    string $username = "";
+    string $xml = insightRequest("get", "http://insightcore.reelfx.com", "users/" + $userID + ".xml", {});
+    string $usernameNode[] = xml_getTag($xml, "user-name");
+    if (size($usernameNode) > 0) {
+        $username = xml_getCharacterData($usernameNode[0]);
+    }
+    $idCache[size($idCache)] = $userID;
+    $usernameCache[size($usernameCache)] = $username;
+    return $username;
+}
+
+// ---------------------------------------------------------------------------------------------------
+proc getSliceUserNames(string $strucfile, string $slices[], string $supervisors[], string $artists[])
+{
+    clear($supervisors);
+    clear($artists);
+    for ($i = 0; $i < size($slices); $i++) {
+        $supervisors[$i] = "";
+        $artists[$i] = "";
+    }
+
+    string $seq = getPath("SequenceFromFilename", {$strucfile});
+    string $shot = getPath("ShotFromFilename", {$strucfile});
+    string $xml = insightGetTaskStatus($seq, $shot, "Animation", "");
+    string $tasks[] = xml_getTag($xml, "Task");
+
+    string $idCache[], $usernameCache[];
+    for ($i = 0; $i < size($tasks); $i++) {
+        string $taskName = xml_getVar($tasks[$i], "TaskName");
+        string $slice = AnimSlicesGetSliceFromTaskName($taskName);
+        int $index = stringArrayFindIndex($slice, $slices);
+        if ($index != -1) {
+            string $supervisorID = xml_getVar($tasks[$i], "SupervisorID");
+            $supervisors[$index] = getUserNameFromID($supervisorID, $idCache, $usernameCache);
+            string $artistID = xml_getVar($tasks[$i], "WorkerID");
+            $artists[$index] = getUserNameFromID($artistID, $idCache, $usernameCache);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Build an xml string with information about the deep playblast
+// ---------------------------------------------------------------------------------------------------
+global proc string DeepPlayblastMakeXML(string $strucfile, string $deepPlayblastFile, string $namespaceTrack)
+{
+	loadPlugins();
+
+	string $result = "";
+	$result += "<DeepPlayblast ";
+    if ($deepPlayblastFile != "") {
+        $result += "File=\"" + $deepPlayblastFile + "\"";
+    }
+    $result += ">\n";
+
+	if ($namespaceTrack != "") {
+		string $namespaces[], $paths[], $versions[], $types[], $phases[], $masterCam[];
+		string $sliceNames[], $sliceSupervisors[], $sliceArtists[], $sliceNamespaces[];
+		int $namespacesInSlice[], $reserved[];
+		vector $colors[];
+
+		getNamespaceInfoFromStructureFile($strucfile, $namespaces, $paths, $versions, $types, $phases, $masterCam);
+		AnimSlicesGetSlicesFromStructureFile($strucfile, $sliceNames, $namespacesInSlice, $sliceNamespaces, $reserved);
+		getColors($namespaces, $colors);
+
+        getSliceUserNames($strucfile, $sliceNames, $sliceSupervisors, $sliceArtists);
+
+		$result += "\t<Namespaces Track=\"" + $namespaceTrack + "\">\n";
+		int $pos = 0;
+		for ($s = 0; $s < size($sliceNames); $s++)
+		{
+			string $prefix = "\t\t";
+			if ($sliceNames[$s] != "")
+			{
+				$result += "\t\t<Slice Name=\"" + $sliceNames[$s] + "\"";
+                if ($sliceSupervisors[$s] != "") {
+                    $result += " Supervisor=\"" + $sliceSupervisors[$s] + "\"";
+                }
+                if ($sliceArtists[$s] != "") {
+                    $result += " Artist=\"" + $sliceArtists[$s] + "\"";
+                }
+                $result += ">\n";
+				$prefix += "\t";
+			}
+			for ($n = 0; $n < $namespacesInSlice[$s]; $n++)
+			{
+				int $i = stringArrayFindIndex($sliceNamespaces[$pos], $namespaces);
+				$pos++;
+
+				if ($i >= 0)
+				{
+					vector $color = $colors[$i];
+					int $r = int($color.x * 255);
+					int $g = int($color.y * 255);
+					int $b = int($color.z * 255);
+
+					$result += $prefix;
+					$result += "<Namespace";
+					$result += " Name=\"" + $namespaces[$i] + "\"";
+					$result += " Color=\"" + $r + "," + $g + "," + $b + "\"";
+					$result += " AssetPath=\"" + $paths[$i] + "\"";
+					$result += " AssetVersion=\"" + $versions[$i] + "\"";
+					$result += " AssetType=\"" + $types[$i] + "\"";
+                    if ($phases[$i] != "") {
+                        $result += " Phase=\"" + $phases[$i] + "\"";
+                    }
+                    if ($masterCam[$i] != "") {
+                        $result += " MasterCamera=\"" + $masterCam[$i] + "\"";
+                    }
+					$result += " />\n";
+				}
+			}
+			if ($sliceNames[$s] != "")
+			{
+				$result += "\t\t</Slice>\n";
+			}
+		}
+		$result += "\t</Namespaces>\n";
+	}
+
+	$result += "</DeepPlayblast>\n";
+	return $result;
+}

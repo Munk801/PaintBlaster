@@ -1,0 +1,4973 @@
+// PlayblastTool.mel (c) 2006 ReelFX Creative Studios
+// Verision 1.0
+// author: Harry Michalakeas
+
+/*
+Description:
+	Automated Playblast mechanism. Recieves an xml instruction file, reads it, opens the shot, and playblasts it. Designed to be run as a process submitted by qube.
+Use:
+	PlayblastTool args
+Options:
+	args (string)	- semi-colon delimited argument string in the form arg1=val1;arg2=val2
+
+Dependancies:
+
+	parseXML.mel
+	xml_parser plug-in
+	rfxOverlay plug-in
+	argList.mel
+	fileIO.mel
+	getPath
+	stringArrayFindIndex
+	createRfxOverlayFromTemplate
+	padNumber
+	getFileSize
+	AnimSlicesUtilities.mel
+
+
+Documentation:
+
+Examples:
+
+Notes:
+
+	source "/data/film/apps/reelfx/maya/scripts/pipelineScripts/playblast/wip/PlayblastTool.6.10.mel"
+Bugs:
+
+Original:	09/18/06
+Revisions:	09/22/06	Rev 1.0
+		- Added temporary code to ensure that nearClippingPlane is not below 0.01 (due to problems with rfxOverlay node)
+		- Added movie generation code.
+
+		10/02/06	Rev 1.1
+		- Added handling of mencoder audio as well as video options
+		- Removed temporary clipping plane code.
+
+		10/09/06	Rev 1.4
+		- Added support for ffmpeg
+		- Adding checking of frames and movie after creation
+		- Added start and end message with time stamps.
+		- Added the -useDefaultMaterial off flag in the modelEditor setup proc
+
+		10/18/06	Rev 1.5
+		- Re-organized so that the process occurs in two steps. Perform all the set up. Then evalDeferred -lp everything from the playblast on. This is so that control
+		will briefly be returned to maya so that it can finish initializing the graphics
+
+		10/23/06	Rev 1.6
+		- Hooking up qt fast start
+		- Hooking up export of overlay. This is a cheap and dirty way of letting the movie robot know that the frames in a given directory already have an overlay, so one
+		doesn't need to be created.
+
+		11/08/06	Rev 1.7
+		- Switching to a more robust method of getting a start time to compare newly created images against (from the file system instead of system time - this allows the system
+		to continue working even if the system time is off from the file system time)
+
+		11/30/06	Rev 1.8
+		- Propogating resulting movie to locations for Movie robot, and check that it made it.
+
+		12/01/06	Rev 1.9
+		- Propogating movie to edit_supervisor as well.
+
+		12/12/06	Rev 2.0
+		- Added deferred per frame playblasting, to solve the texture loading issue (only textures which are in frame at initial frame being loaded)
+
+		12/14/06	Rev 2.1
+		- Modified PlayblastToolHideLocators to catch snapshotShape's as well.
+
+		??/??/??	Rev 2.2
+		- Changes made by Kevin M.
+
+		02/22/07	Rev 2.3
+		- Check for 0k audio files, and treat them as "no audio"
+
+		03/21/07	Rev 2.4
+		- Enabling the display of imageplanes
+		- ROLLBACK to 2.3
+
+		03/26/07	Rev 2.5
+		- Enabling display of imagePlanes (fix has been done to rfxOverlay node)
+
+		03/29/07	Rev 2.6
+		- Hiding cameras which don't have an imagePlane attached.
+
+		05/24/07	Rev 3.0
+		- Added PlayblastToolPropogateFrames() and PlayblastToolBuildSequenceMovies()
+
+		06/06/07	Rev 3.1
+		- Added check for project version of rfxBuildMoviesPath.py
+
+		06/15/07	Rev 3.2
+		- ?
+
+		09/14/07	Rev 3.3		KM
+		- PlayblastPreCallback and PlayblastPostCallback functions added previously, but not versioned
+		- Folder archiving now includes tga files
+
+		10/24/07	Rev 3.4		KM
+		- Put catch statements around system calls to /bin/mv
+
+		11/05/07	Rev 3.5		KM
+		- Added check for existing active jobs.  If active jobs exist we may decide to not submit new jobs.
+
+		11/20/07	Rev 3.6		KM
+		- Implemented versioned frames and mov files on /render to match the Insight movie files on /data.
+
+		11/26/07	Rev 3.7		KM
+		- Deleted obsolete proc PlayblastToolDoPlayblast()
+		- Removed unused instances of variable PlayblastToolDoPlayblast
+		- Removed archiving of edit_supervisor
+
+		11/27/07	Rev 3.8		KM
+		- Added check to prevent the creation of /archive and /playblast subfolders in the /playblasts folders on /data
+
+		12/05/07	Rev 3.9		KM
+		- Added code to delete gOutputfmt frames from pre-existing playblast folders
+		- Clean up of code previously commented out
+
+		02/12/08	Rev 4.0		HM
+		- Made PlayblastToolHideLocators more robust
+
+		02/15/08	Rev 4.1		HM
+		- Fixing a bug that appears in PlayblastToolHideLocators when underworld objects are encountered
+
+		04/11/08	Rev 4.2		KM
+		- Added full path to call for /usr/bin/python
+
+		06/20/08	Rev 4.3		HM
+		- Fixed a typo that was causing everything to be in textured mode regardless of value of gShadingMode
+
+		07/14/08	Rev 4.4		KM
+		- Re-wrote the python timer wrapping the qt-faststart call
+		- Started changing Python calls made via system() to calls made via python()
+
+		08/12/08	Rev 4.5		KM
+		- Added xargs for deleting large numbers of files
+
+		10/16/08	Rev 4.6		KM
+		- Added game setting of 15 fps
+
+		12/30/08	Rev 4.7		HM	(commited by KM)
+		- Changes made to support new directory structure.
+
+		01/20/09	Rev 4.8		KM
+		- Changes made to support creation of FLV movies
+
+		03/02/09	Rev 4.9		KM
+		- Replaced the hardcoded flv resolution with the playblast resolution
+		- Replaced flvmeta with flvtool++
+
+		03/30/09	Rev 5.0		GD
+		- Added support to playblast through a stereo camera in anaglyph mode
+
+		05/01/09	Rev 5.1		GD
+		- Rather than skipping the hiding of cameras with imagePlanes we now set the locator scale to 0.
+
+		09/24/09	Rev 5.2		KM
+		- Moved checks for existing sequence movie jobs into rfxBuildMovies.py
+		- Updated name of rfxBuildMovies jobs to match format of the rfxBuildSequenceMovie jobs
+
+		09/29/09	Rev 5.3		HM
+		- Added support for open gl lit mode, and the open gl high quality renderer
+
+		10/08/09	Rev 5.4		HM
+		- Check for presense of lights when lighting is turned on, and turn it off if none are present
+
+		10/20/09	Rev 5.5		HM
+		- Adding ability to switch all rigs to render res if requested.
+
+		11/19/09	Rev 5.6		HM
+		- Putting ignore version in file opens
+
+		02/12/10	Rev 5.7		HM
+		- During setSmoothing, respect overrideSmooth if on
+
+		03/25/10	Rev 5.8		HM
+		- Reading John's media_file_id stuff (undocumented) for insight from instruction xml
+		- Adding support for separate movie res from frame res
+
+		04.28.2010	5.9	janderholm
+		- Removes _ani/_lay from the live link name to be compatible with movie maker.
+		e.g. versioned files are seq_shot_dep_ver.####.png, live files are seq_shot.####.png
+
+		06/07/2010	6.0		HM
+		- Suppressing error message when removing old frames from edit_supervisor directory and when removing temp flv file
+		- Commented out the disabling of render res for layout rigs - there is no control in outsight by task
+
+		06/15/2010	6.1		HM
+		- If the project is stereo, apply the stereo overrides
+
+		07.14.2010	6.2	janderholm
+		- The filmFit is set to overscan, and the overscan is set to 1.0 on $gCameraShape
+		to ensure proper framing.
+
+		07.22.2010 6.3 mfortner
+		- commenting out the block of code checking to see if frames are less than 1000
+		in PlayblastToolCheckFrames
+
+		09.30.2010	6.4	janderholm
+		- Updated camera check looking for multiples to look based on name.
+
+		10.13.2010	6.5	jcarey
+		- Added $gWireframeOnShaded for future use of enabling wireframe on shaded in playblasts
+
+		10.28.2010	6.6	janderholm
+		- Make sure to set active stereo cameras to overscan @ 1.0.
+		- Disables all zeroParallaxPlanes.
+		- Uses findAssetsByName to track down the stereo camera.
+		- Now just always calls maximize function.
+
+		12.16.2010	6.7 jbarrett
+		- Because stereo camera references may now be locked out of layout,
+		the camera's lock state is checked, and toggled if necessary
+
+		01.25.2011	6.8	hmichalakeas
+		- Upping texture res if universal eye is found.
+		- Adding smoothing to NURBS objects
+
+		02.05.2011	6.9	kmacphail
+		- Removed vframes from mov creation, was causing last frame to drop audio
+
+		02.08.2011	6.10	kmacphail
+		- Merged Rockettes version back into main branch
+
+		03.04.2011	6.11	jbarrett
+		- Disabled loading of saved UI configuration
+
+		03.24.2011	6.12	janderholm
+		- Updated imagePlane/camera hiding to skip the hiding process after scaling
+		the camera's locator scale to 0.0001.
+
+		05.10.2011	6.13	jbarrett
+		- Modified window maximization to work around a hiccup in KDE 4 for local playblasts
+
+		05.16.2011	6.14	jmorrison
+		- Added a check for exTraFramesAtHead in the instructions file as well as the associated
+		actions that should be performed.
+
+		05.17.2011	6.15	janderholm
+		- Now explicitly sets hardware renderer.
+
+		05.26.2011  6.16    jbarrett
+		- More tweaks to window sizing to undo Linux window maximization from previous playblast
+
+		06.14.2011  6.17    jbarrett
+		- added PlayblastToolSetLogState proc for logging Maya's script editor output
+
+		07.11.2011	6.18	jmorrison
+		- Added a test for pixel_separation_info locators to hide them (line 2102)
+
+		09.12.2011 6.19     dmcatavey
+		- Added "PNG" in defaultRenderGlobals list in an attempt to produce
+		compatability with Maya 2012
+
+		09.14.2011 6.20		dmcatavey
+		- Added if statement to check if output images were .iff's, and convert them to
+		.png's if necessary.
+
+		10.03.2011 6.21		dmcatavey
+		- Added support for ntsc field (60 fps) frame rate.
+
+		10.07.2011 6.22		dmcatavey
+		- ntsc field was not the correct name. ntscf was.
+
+		10.20.2011 6.23		dmcatavey
+		- Removed logic to check for iff files. Amazing how well things work
+		when you implement the proper commands!
+
+		10.28.2011 6.24		janderholm
+		- Preroll now executes before each run.  So if force reload is off and
+		stereo is on, preroll will run before each eye.
+		- Software rendering support added.
+		- Added ability to import light rig.
+		- Distribution has been implemented.
+			- The post process can be bypassed for subjobs.
+			- The post process can be invoked exclusively for a post job.
+		- Added ability to load render globals preset.
+
+		11.01.2011	6.25	janderholm
+		- Updated distribution handling to use farm tag in Playblast.xml
+
+		11.18.2011	6.26	janderholm
+		- Explicitly set the renderer to mayaSoftware to prevent problems
+		when loading globals.
+
+		12.08.2011	6.27	janderholm
+		- Use temp_unlock_camera to circumnavigate python util issues.
+
+		12.14.2011	6.28	janderholm
+		- Patch: Diable viewport update in attempt to speed up preroll for traditional playblast.
+
+		12.07.2011  	6.3	jneumann
+		- Now checking highQualityRendering setting and setting up the machines
+		viewport properly.
+
+		12.08.2011  	6.4	jneumann
+		- In PlayblastToolGetStereoCamera we first check if gDoStereo is active before
+		trying to run that call since it was erroring out with mono shots over an iterator.
+
+		01.14.2012 	6.41	jneumann
+		- Combined dave and underground playblast code.
+
+		01.24.2012 	6.42    cpenny
+		- set enableUniversalEye to on at same time as render switch
+
+		03.23.2012	6.43	hmichalakeas
+		- Fixed a bug in the logic which occured when the show is stereo, but we do not wish to do a stereo playblast.
+		Previously, either gIsStereo (the show), OR gDoStereo (the playblast) being off would cause us to not retrieve the stereo cam info
+		This was not correct, since if the show is stereo, but we are not doing a stereo playblast, we would still want to playblast through
+		the left stereo cam and therefore need that info.
+		- Updated PlayblastToolPrintOptions to print additional options that have been added in recent months.
+
+		04.05.2012 6.45		mjefferies
+		- Add support for animation slices and deep playblast
+
+		04.24.2012 6.46		mjefferies
+		- Added a call to movutils during deep playblast to make sure the quicktime player
+		  shows track 0 (the regular playblast) over track 1 (the deep playblast)
+
+		04.27.2012 6.47		mjefferies
+		- Bug fix for more robust handling of a failure to create the deep playblast render layer
+
+        04.27.2012 6.48     mjefferies
+        - Add a flag to ffmpeg to include the target filename as metadata in the mov file.
+
+        - Change deep playblast behavior to export a completely separate file with namespace track.
+          So now in deep playblast mode you get the normal file, and the deep playblast file with two video tracks
+
+        05.24.2012 6.50     mjefferies
+        - Modified deep playblast to generate a temp structure file during layout in order to
+          build the namespace info.
+
+        06.06.2012 6.51     mjefferies
+        - Added support for deep playblast of gpu meshes
+
+        06.13.2012 6.52	   hmichalakeas
+        - Placed a catch around the file -lr which is called when load all references is turned on
+
+        08.02.2012 6.53     mjefferies
+        - Added making backup copy of deep playblast xml file if it contains slices
+
+        08.21.2012 6.54    hmichalakeas
+        - Adjusted PlayblastToolGetStereoCamera so that it sets the overscan to 1.0 on the left and right stereo cams as well as the master.
+
+        08.29.2012 6.55     mjefferies
+        - Added call to re-sync anim slices after forcing the visibilty of all caches, so that visibility of set props will match the cache.
+
+        08.30.2012 6.56	   hmichalakeas
+        - Added calls to DeepPlayblastPushNamespaceMaterials and DeepPlayblastPopNamespaceMaterials in push/pop render layers (Deep Playblast related)
+
+        11.15.2012 6.57     mjefferies
+        - Force HQ Graphics for anim slices mesh gpu caches during playblast
+
+        01.28.2013 6.58     mjefferies
+        - Added call to clear settings that could be altered by the AnimSlicesDashboard
+
+To-do's:
+		- Handling of display layers. Do we want to preserve them?
+		- Per shot callbacks
+		- Resolution check for movies (width must be multiple of 4)
+		- Image format check. Make sure that we are playblasting a format that the encoder can handle.
+*/
+// ---------------------------------------------------------------------------------------------------
+// source statements
+//
+// ---------------------------------------------------------------------------------------------------
+// global variables
+//
+// ---------------------------------------------------------------------------------------------------
+// load all plug-ins required for this mel script
+proc loadPlugins()
+{
+	eval("source \"AnimSlicesUtilities.mel\";");
+    eval("source \"AnimSlicesDashboard.mel\";");
+
+	if(!`pluginInfo -q -l "xml_parser"`)
+		loadPlugin("xml_parser");
+	if(!`pluginInfo -q -l "rfxOverlay"`)
+		loadPlugin("rfxOverlay");
+	if(!`pluginInfo -q -l "timeQuery"`)
+		loadPlugin("timeQuery");
+	if(!`pluginInfo -q -l "Mayatomr"`)
+		loadPlugin("Mayatomr");
+}
+
+proc temp_unlock_camera()
+{
+	string $refs[] = `file -q -r`;
+	for($ref in $refs)
+	{
+		string $asset_name = getPath("AssetNameFromFilename", {$ref});
+		if($asset_name == "stereoCam")
+		{
+			string $rfn = `referenceQuery -rfn $ref`;
+			if(!`file -q -dr $ref`)
+			{
+				file -ur $rfn;
+				setAttr($rfn + ".locked", 0);
+				file -lr $rfn;
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolSetLogState - Turns script editor logging on/off
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSetLogState(int $state)
+{
+	global string $gInputScene;     // The scene to playblast
+
+	if (!`about -batch`)
+	{
+		if ($state)
+		{
+			// Is logging already turned on?  If so, disable it before starting a new log
+			if (`scriptEditorInfo -q -writeHistory`)
+			{
+				scriptEditorInfo -writeHistory false;
+			}
+
+			// For now, only save a single log file for the shot
+			// In the future, versioned logs might be helpful
+			string $logfile = dirname(dirname($gInputScene)) + "/td/playblastLog.txt";
+			PlayblastToolMessage("Opening script editor log file: " + $logfile);
+			scriptEditorInfo -historyFilename $logfile -writeHistory true -clearHistoryFile;
+		}
+		else
+		{
+			if (`scriptEditorInfo -q -writeHistory`)
+			{
+				PlayblastToolMessage("Closing script editor log file.");
+				scriptEditorInfo -writeHistory false;
+			}
+			else
+			{
+				PlayblastToolWarning("No script editor log file to close.");
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolMultipleOfTwo - Increments odd intergers by 1
+// ---------------------------------------------------------------------------------------------------
+global proc int PlayblastToolMultipleOfTwo(int $val)
+{
+	if($val % 2)
+		$val += 1;
+
+	return $val;
+}
+// ---------------------------------------------------------------------------------------------------
+// Quit - leave lock file to indicate failure to wrapper
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolQuitError(string $msg)
+{
+	global int $DEBUG;
+	global int $gTempLocHandle;
+	global int $gInsightMediaFileId;
+
+	PlayblastToolMessage("[1;31mError:[0;31m " + $msg + "[0m");
+
+	// Stop the script editor log
+	PlayblastToolSetLogState(0);
+
+	int $batch_mode = `about -batch`;
+	if ($DEBUG || getenv("PLAYBLASTING") == "" && !$batch_mode)
+	{
+		print("$DEBUG: " + $DEBUG + "\n");
+		print("ENV PLAYBLASTING: " + getenv("PLAYBLASTING") + "\n");
+		error("");
+	}
+	else
+	{
+		if ($gTempLocHandle)
+		{
+			fclose($gTempLocHandle);
+		}
+
+		PlayblastToolInsightCallback(2, $msg);
+
+		int $qube_job_id = getThisQubeJobId();
+		if ($batch_mode && $qube_job_id)
+		{
+			quit -a -ec 1;
+			error("abort");
+			return;
+		}
+
+		// harsh, but quit -f errors, and evalDeferred("quit -f") leaves maya running until you touch the mouse
+//		system("killall -9 maya.bin >& /dev/null");
+		int $pid = getpid();
+		system("kill -9 " + string($pid) + " >& /dev/null");
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// Quit - remove lock file to indicate success to wrapper
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolQuitSuccess()
+{
+	global int $DEBUG;
+	global string $gLockFile;
+	global int $gTempLocHandle;
+
+	if($gTempLocHandle)
+		fclose($gTempLocHandle);
+
+	PlayblastToolMessage("DONE.");
+
+	if(!$DEBUG && getenv("PLAYBLASTING") != "")
+	{
+		// remove lock file to indicate success to wrapper
+		if(`filetest -f $gLockFile`)
+			sysFile -del $gLockFile;
+
+		// harsh, but quit -f errors, and evalDeferred("quit -f") leaves maya running until you touch the mouse
+		int $pid = getpid();
+		system("kill -9 " + string($pid) + " >& /dev/null");
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolMessage(string $msg)
+{
+	global int $gTempLocHandle;
+	global int $DEBUG;
+
+	string $prefix = "[1;30mPlayblastTool [[0;33m" + date() + "[1;30m]:[0m ";
+
+	string $buffer[] = stringToStringArray($msg, "\n");
+	string $line = "";
+	for($i = 0; $i < size($buffer); $i += 1)
+		$line += $prefix + $buffer[$i] + "\n";
+	if($line == "")
+		$line += $prefix + "\n";
+
+	// output message to a temporary log. This will be cat'd by the wrapper process, so that our messages will show up in the qberr log.
+	// 04.15.2010 - Attempt to use eprint which will output to stderr in interactive mode.
+	if(!$DEBUG && `getenv "PLAYBLASTING"` != "")
+	{
+		if(!$gTempLocHandle)
+			$gTempLocHandle = fopen("/usr/tmp/PlayblastTempLog.txt", "w");
+
+		if(!eprint($line))
+			fprint($gTempLocHandle, $line);
+	}
+	else
+		eprint($line);
+}
+global proc PlayblastToolWarning(string $msg)
+{
+	PlayblastToolMessage("[1;35mWarning:[0;35m " + $msg + "[0m");
+}
+global proc PlayblastToolSeparator()
+{
+	PlayblastToolMessage("________________________________________________________________________________");
+	PlayblastToolMessage("");
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolGetTagError - wrapper for xml_getTag - throw an error if the tag is not found
+// ---------------------------------------------------------------------------------------------------
+proc string[] PlayblastToolGetTagError(string $xml, string $tagName)
+{
+	global string $gInstructionFile; // xml instructions for playblast
+
+	string $node[] = xml_getTag($xml, $tagName);
+	if(!size($node))
+		PlayblastToolQuitError("Problems occured reading " + $gInstructionFile + ". Found no " + $tagName + " node.");
+
+	return $node;
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolGetVarError - wrapper for xml_getVar - throw an error if the var is not found
+// ---------------------------------------------------------------------------------------------------
+proc string PlayblastToolGetVarError(string $xml, string $tagName, string $varName)
+{
+	global string $gInstructionFile;	// xml instructions for playblast
+
+	string $val = xml_getVar($xml, $varName);
+
+	if($val == "")
+		PlayblastToolQuitError("Problems occured reading " + $gInstructionFile + ". Found no attribute " + $varName + " in node " + $tagName + ".");
+
+	return $val;
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolGetStereoCamera - finds the reference who's .name attr matches $gPlayblastStereoCamera
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolGetStereoCamera()
+{
+	global string $gCamera; // Cam to playblast thru
+	global string $gPlayblastStereoCamera; // the .name attr value - the name of the stereo camera to use
+	global int $gIsStereo;
+	global string $gPlayblastStereoCameraLeft;
+	global string $gPlayblastStereoCameraRight;
+	global int $gDoStereo;
+	global int $gDoStereoPlayblast;
+
+	if($gPlayblastStereoCamera == "")
+		$gPlayblastStereoCamera = "stereoCam";
+
+	$gDoStereoPlayblast = 0;
+
+
+	// note - do not check for gDoStereo at this point.
+	/*
+		The meaning of the variables is a little confusing.
+		gIsStereo - tells whether the show is stereo
+		gDoStereo - do a stereo playblast for this shot
+
+		It's valid to have a stereo show, but elect not to do stereo playblasts for a given phase. In that case,
+		we still need to get the stereo camera info, since we will be using it to playblast through - we'll just be only doing one eye.
+
+	*/
+	if($gIsStereo)
+	{
+		//string $allProps[] = findAssetsByType("p", 0);
+		//string $stereoCam = "";
+		//for($i = 0; $i < size($allProps); $i+= 1)
+		//	if(getAttr($allProps[$i] + ".name") == $gPlayblastStereoCamera)
+		//		$stereoCam = $allProps[$i];
+		// Update 12/16/10: Because stereo camera references may now be locked out of layout,
+		// check the camera's lock state and unlock it before doing anything else
+		// python("import layoutUtils");
+		// if(python("layoutUtils.is_shot_camera_locked()"))
+		// 	python("layoutUtils.toggle_shot_camera_lock()");
+		temp_unlock_camera();
+
+		string $stereo_cams[] = findAssetsByName($gPlayblastStereoCamera);
+		string $stereoCam = $stereo_cams[0];
+
+
+
+		if($stereoCam != "")
+		{
+			string $all_nodes[] = stringArrayCatenate({$stereoCam}, `listRelatives -ad -pa $stereoCam`);
+
+			string $stereoCamRig[] = `ls -type "stereoRigTransform" $all_nodes`;
+
+
+			if(objExists($stereoCamRig[0]))
+			{
+				PlayblastToolMessage("Found stereo camera rig.");
+				$gCamera = $stereoCamRig[0];
+				//PlayblastToolMessage("Setting $gCamera to " + $stereoCamRig[0]);
+
+				string $frustum[] = `listRelatives -s -pa -type "stereoRigFrustum" $stereoCamRig[0]`;
+				if(objExists($frustum[0]))
+				{
+					string $cons[] = `listConnections -s 1 -d 0 -p 0 -c 0 ($frustum[0] + ".leftCamera")`;
+					$gPlayblastStereoCameraLeft = $cons[0];
+
+					$cons = `listConnections -s 1 -d 0 -p 0 -c 0 ($frustum[0] + ".rightCamera")`;
+					$gPlayblastStereoCameraRight = $cons[0];
+
+					PlayblastToolMessage("Assigning eyes:");
+					PlayblastToolMessage("L -> " + $gPlayblastStereoCameraLeft);
+					PlayblastToolMessage("R -> " + $gPlayblastStereoCameraRight);
+
+					string $offset_plug = $stereoCamRig[0] + ".offset";
+					if(objExists($offset_plug))
+					{
+						$cons = `listConnections -s 1 -d 0 -p 1 -c 0 $offset_plug`;
+						if(size($cons))
+							disconnectAttr $cons[0] $offset_plug;
+
+						// This controls how the horizontal film offset is applied to the left and right
+						// cameras.
+						// 0 - Disabled -> horizontal film offset is set to 0 on both cameras.
+						// 1 - Uniform -> hfo is equal but opposite on both cameras.
+						// 2 - Proportional -> if one camera is fixed, its hfo is set to 0, and the other
+						//					   is set to 2x the amount.  If neither camera is fixed, the
+						//					   hfo is uniform.
+						//
+						// In talks with Nick Ilyin, proportional is what should be used.  We will probably
+						// end up locking the left camera, and rendering it at res.  The right camera will
+						// have its hfo disabled for rendering purposes, but will be rendered with overscan
+						// and the hfo will be applied in comp.
+						// For the most part, the interaxial separation should remain at 6.35.
+						// The general concensus is that toe-in should be completely avoided.
+						//setAttr $offset_plug 2;
+
+						// More updates:
+						// It now appears with Troy's brief conversations with the Phil McNally at Dreamworks
+						// that the backplane shifting is indeed the way to go.  Toe-in is verifiably an
+						// abomination.
+						//
+						// Seeing that renderMan allows us some render savings when rendering left and
+						// right images simultaneously, it makes the most sense to just render out the
+						// left and the right images with overscan, and apply a proportional shift in post.
+						// In order to match up between animation and lighting seamlessly, we will
+						// force the proportional setting in the playblast.
+						//
+						// Note that the backplane shift correlates to the zeroParallax setting.  The
+						// interaxial separation actually moves the (right) camera.  If the interaxial separation
+						// changes, there would actually need to be a rerender of the right eye.
+						// If only the parallax changes, the update should be reflected in the translate node
+						// in Nuke.  McNally has been using phrases like, "shift this by 6 pixels", so hopefully
+						// this ends up being the majority of changes (a.k.a. no rerendering).
+						setAttr $offset_plug 1;
+					}
+
+					// Force the camera into overscan.
+					string $camShapes[] = `listRelatives -ad -pa -type "camera" $gCamera`;
+					for ($i=0;$i<size($camShapes);$i++)
+					{
+						// Set the renderable to Overscan.
+						$cons = `listConnections -s 1 -d 0 -p 1 -c 0 ($camShapes[$i] + ".renderable")`;
+						if(size($cons))
+							catch(`disconnectAttr ($cons[0]) ($camShapes[$i])`);
+						catch(`setAttr ($camShapes[$i] + ".renderable") 1`);
+
+						// Set the filmFit to Overscan.
+						$cons = `listConnections -s 1 -d 0 -p 1 -c 0 ($camShapes[$i] + ".filmFit")`;
+						if(size($cons))
+							catch(`disconnectAttr ($cons[0]) ($camShapes[$i])`);
+						catch(`setAttr ($camShapes[$i] + ".filmFit") 3`);
+
+						// Set the overscan to 1.0.
+						$cons = `listConnections -s 1 -d 0 -p 1 -c 0 ($camShapes[0] + ".overscan")`;
+						if(size($cons))
+							catch(`disconnectAttr ($cons[0]) ($camShapes[$i])`);
+						catch(`setAttr ($camShapes[$i] + ".overscan") 1.0`);
+					}
+				}
+			}
+
+			// Disable all zero parallax planes.
+			$stereo_cams = `ls -type "stereoRigCamera"`;
+			for($cam in $stereo_cams)
+			{
+				string $cons[] = `listConnections -s 1 -d 0 -p 1 -c 0 ($cam + ".zeroParallaxPlane")`;
+				if(size($cons))
+					catch(`disconnectAttr ($cons[0]) $cam`);
+				catch(`setAttr ($cam + ".zeroParallaxPlane") 0`);
+			}
+		}
+		else
+		{
+			$gIsStereo = 0;
+			PlayblastToolMessage("Turning off stereo for this playblast. Unable to find stereo camera.");
+		}
+
+
+		if($gIsStereo && $gDoStereo && objExists($gPlayblastStereoCameraLeft) && objExists($gPlayblastStereoCameraRight))
+			$gDoStereoPlayblast = 1;
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolPrintOptions - Print out all the options given after instructions file has been parsed
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolPrintOptions()
+{
+	global string $gInstructionFile;	// xml instructions for playblast
+	global string $gInputScene;		// The scene to playblast
+	global int $gFramePreRollStart; // The frame on which the preroll should start.
+	global int $gFrameRangeStart;		// Start frame to playblast
+	global int $gFrameRangeEnd;		// End frame (inclusive) to playblast
+	global int $gExtraFramesAtHead;		// Preroll frames for dynamics, etc
+	global string $gCamera;			// Cam to playblast thru
+	global int $gRefSwitchProxyToFull;	// Use selective preload to switch proxy refs to full
+	global int $gRefLoadAllRefs;		// Load all references
+	global int $gExecutePerAssetCallbacks;	// Execute per asset callbacks if any exist
+	global int $gSwitchAssetsToRender;	// if rigs have a res attribute, set it to render
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+	global string $gTargetMoviePath;	// Where to write movies, if desired
+	global string $gShadingMode;		// wireframe, shaded, or textured.
+	//	global int $gWireframeOnShaded;	// wireframe on shaded
+	global int $gLighting;			// Open GL lighting
+	global int $gHighQualityRendering;		// Hi Quality GL renderer
+	global int $gSetSmoothing;		// Smooth all the assets - if they have built in smoothing?
+	global int $gSmoothDivisions;		// How many divisions to smooth to.
+	global int $gDoStereo;			// Override to disable Stereo Playblasts
+	global int $gDoDeepPlayblast;	// Override to disable Deep Playblasts
+	global int $gDoReload;			// Override to disable texture reloads
+	global int $gDoHires;			// Override to default to Movie Resolution
+	global int $gSoftwareRender; 		// Use the software renderer instead of playblast.
+	global string $gRenderGlobalsPreset; 	// Render globals preset.
+	global int $gResWidth;			// x resolution to playblast at
+	global int $gResHeight;			// y resolution to playblast at
+	global float $gResAspect;		// aspect ratio
+	global int $gMovieResWidth;		// x resolution of movie, may be different than frame size
+	global int $gMovieResHeight;		// y resolution of movie, may be different than frame size
+	global float $gMovieResAspect;		// aspect ratio of movie, may be different than for frames
+	global string $gOutputFmt;		// Output format for frames.
+	global int $gDoMovie;			// Make a movie?
+	global int $gDoAudio;			// If we are making a movie, include audio?
+	global string $gMovieFPS;		// fps for movie
+	global string $gMovieType;		// mov or avi
+	global int $gFastStart;			// run qt fast start on movie?
+	global string $gEncoder;		// encoder to use "ffmpeg" or "mencoder"
+	global string	$gEncoderVideoOptions;	// option string to send to mencoder for creating movies
+	global string $gEncoderAudioOptions;	// option string to send to mencoder for audio options
+	global string $gAudioPath;		// Path to audio for the shot
+	global int $gDoOverlay;			// Comp an overlay on top of the images.
+	global string $gOverlayTemplate;	// Template xml for creating overlay
+	global string $gPlayblastStereoCamera;	// the .name attr value - the name of the stereo camera to use
+	global int $gIsStereo;			// If 1 then playblast through the stereo camera
+	global string $gHost;			// Who submitted? "maya" or "insight"
+	global string $gInsightCallbackPath;	// Referer for the webservice
+	global string $gInsightCallbackArgs;	// Webservice arguments
+	global int $gInsightMediaFileId;	// Media file id for insight playblast.
+	global int $gBypassPostPlayblast; // Skip the post playblast process (will be handled elsewhere).
+	global int $gPostPlayblastOnly; // Just run the post playblast process.
+	global string $gLightRigName;
+	global string $gPlayblastPreCallback; // if it exists, this will be the path to the pre playblast callback
+	global string $gPlayblastPostCallback; // if it exists, this will be the path to the post playblast callback
+
+
+	// find the pre and post callback scripts if they exist
+	//
+	PlayblastToolCheckPreCallback();
+	PlayblastToolCheckPostCallback();
+
+
+	PlayblastToolMessage("Options:");
+	PlayblastToolMessage("Instructions file: " + $gInstructionFile);
+	PlayblastToolMessage("Input Scene: " + $gInputScene);
+	PlayblastToolMessage("Pre-roll Start: " + $gFramePreRollStart);
+	PlayblastToolMessage("Frame Range Start: " + $gFrameRangeStart);
+	PlayblastToolMessage("Frame Range End: " + $gFrameRangeEnd);
+	PlayblastToolMessage("Camera: " + $gCamera);
+	PlayblastToolMessage("Switch Proxy References to Full: " + $gRefSwitchProxyToFull);
+	PlayblastToolMessage("Execute Per Asset Callbacks: " + $gExecutePerAssetCallbacks);
+	PlayblastToolMessage("Switch Res to Render: " + $gSwitchAssetsToRender);
+	PlayblastToolMessage("Target Image Path: " + $gTargetImagePath);
+	PlayblastToolMessage("Shading Mode: " + $gShadingMode);
+//	PlayblastToolMessage("Wireframe on Shaded Mode: " + $gWireframeOnShaded);
+	PlayblastToolMessage("Lighting: " + $gLighting);
+	PlayblastToolMessage("Light Rig: " + $gLightRigName);
+	PlayblastToolMessage("High Quality Rendering: " + $gHighQualityRendering);
+	PlayblastToolMessage("Software Render: "+$gSoftwareRender);
+	PlayblastToolMessage("Render Globals Preset: "+$gRenderGlobalsPreset);
+	PlayblastToolMessage("Set Smoothing: " + $gSetSmoothing);
+	PlayblastToolMessage("Smooth Divisions: " + $gSmoothDivisions);
+	PlayblastToolMessage("Resolution Width: " + $gResWidth);
+	PlayblastToolMessage("Resolution Height: " + $gResHeight);
+	PlayblastToolMessage("Aspect Ratio: " + $gResAspect);
+	PlayblastToolMessage("Output Format: " + $gOutputFmt);
+	PlayblastToolMessage("Do Movie: " + $gDoMovie);
+	PlayblastToolMessage("Target Movie Path: " + $gTargetMoviePath);
+	PlayblastToolMessage("Movie Frame Rate: " + $gMovieFPS);
+	PlayblastToolMessage("Movie Type: " + $gMovieType);
+	PlayblastToolMessage("Movie Resolution Width: " + $gMovieResWidth);
+	PlayblastToolMessage("Movie Resolution Height: " + $gMovieResHeight);
+
+	PlayblastToolMessage("Fast Start: " + $gFastStart);
+	PlayblastToolMessage("Encoder: " + $gEncoder);
+	PlayblastToolMessage("Encoder video options: " + $gEncoderVideoOptions);
+	PlayblastToolMessage("Encoder audio options: " + $gEncoderAudioOptions);
+	PlayblastToolMessage("Do Audio: " + $gDoAudio);
+	PlayblastToolMessage("Audio Path: " + $gAudioPath);
+	PlayblastToolMessage("Do Overlay: " + $gDoOverlay);
+	PlayblastToolMessage("Pre Callback: " + $gPlayblastPreCallback);
+	PlayblastToolMessage("Post Callback: " + $gPlayblastPostCallback);
+
+	PlayblastToolMessage("Stereo camera name: " + $gPlayblastStereoCamera);
+	PlayblastToolMessage("Stereo Show: " + $gIsStereo);
+	PlayblastToolMessage("Stereo Playblast: " + $gDoStereo);
+	PlayblastToolMessage("Deep Playblast: " + $gDoDeepPlayblast);
+	PlayblastToolMessage("Callback host: " + $gHost);
+	PlayblastToolMessage("Callback path: " + $gInsightCallbackPath);
+	PlayblastToolMessage("Callback args: " + $gInsightCallbackArgs);
+	PlayblastToolMessage("Insight Media Field ID: " + $gInsightMediaFileId);
+	PlayblastToolMessage("Bypass Post Playblast: " + $gBypassPostPlayblast);
+	PlayblastToolMessage("Post Playblast Only: " + $gPostPlayblastOnly);
+
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolParseInstructions - Parse the instructions xml
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolParseInstructions()
+{
+	// global vars
+	global string $gInstructionFile;	// xml instructions for playblast
+	global string $gInputScene;		// The scene to playblast
+	global int $gFramePreRollStart; // The frame on which the preroll should start.
+	global int $gFrameRangeStart;		// Start frame to playblast
+	global int $gFrameRangeEnd;		// End frame (inclusive) to playblast
+	global int $gExtraFramesAtHead;		// Preroll frames for dynamics, etc
+	global string $gCamera;			// Cam to playblast thru
+	global int $gRefSwitchProxyToFull;	// Use selective preload to switch proxy refs to full
+	global int $gRefLoadAllRefs;		// Load all references
+	global int $gExecutePerAssetCallbacks;	// Execute per asset callbacks if any exist
+	global int $gSwitchAssetsToRender;	// if rigs have a res attribute, set it to render
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+	global string $gTargetMoviePath;	// Where to write movies, if desired
+	global string $gShadingMode;		// wireframe, shaded, or textured.
+//	global int $gWireframeOnShaded;	// wireframe on shaded
+	global int $gLighting;			// Open GL lighting
+	global int $gHighQualityRendering;		// Hi Quality GL renderer
+	global int $gSetSmoothing;		// Smooth all the assets - if they have built in smoothing?
+	global int $gSmoothDivisions;		// How many divisions to smooth to.
+	global int $gDoStereo;			// Override to disable Stereo Playblasts
+	global int $gDoReload;			// Override to disable texture reloads
+	global int $gDoHires;			// Override to default to Movie Resolution
+	global int $gSoftwareRender; 		// Use the software renderer instead of playblast.
+	global string $gRenderGlobalsPreset; 	// Render globals preset.
+	global int $gResWidth;			// x resolution to playblast at
+	global int $gResHeight;			// y resolution to playblast at
+	global float $gResAspect;		// aspect ratio
+	global int $gMovieResWidth;		// x resolution of movie, may be different than frame size
+	global int $gMovieResHeight;		// y resolution of movie, may be different than frame size
+	global float $gMovieResAspect;		// aspect ratio of movie, may be different than for frames
+	global string $gOutputFmt;		// Output format for frames.
+	global int $gDoMovie;			// Make a movie?
+	global int $gDoAudio;			// If we are making a movie, include audio?
+	global string $gMovieFPS;		// fps for movie
+	global string $gMovieType;		// mov or avi
+	global int $gFastStart;			// run qt fast start on movie?
+	global string $gEncoder;		// encoder to use "ffmpeg" or "mencoder"
+	global string	$gEncoderVideoOptions;	// option string to send to mencoder for creating movies
+	global string $gEncoderAudioOptions;	// option string to send to mencoder for audio options
+	global string $gAudioPath;		// Path to audio for the shot
+	global int $gDoOverlay;			// Comp an overlay on top of the images.
+	global string $gOverlayTemplate;	// Template xml for creating overlay
+	global string $gPlayblastStereoCamera;	// the .name attr value - the name of the stereo camera to use
+	global int $gIsStereo;			// If 1 then playblast through the stereo camera
+	global string $gHost;			// Who submitted? "maya" or "insight"
+	global string $gInsightCallbackPath;	// Referer for the webservice
+	global string $gInsightCallbackArgs;	// Webservice arguments
+	global int $gInsightMediaFileId;	// Media file id for insight playblast.
+	global int $gBypassPostPlayblast; // Skip the post playblast process (will be handled elsewhere).
+	global int $gPostPlayblastOnly; // Just run the post playblast process.
+	global string $gLightRigName;
+	global int $gDoDeepPlayblast;
+
+	int $qube_id = getThisQubeJobId();
+	int $qube_frame = getThisQubeFrameNumber();
+
+	PlayblastToolMessage("Qube: " + string($qube_id) + ":" + string($qube_frame));
+
+	// make sure the instructions file exists
+	if(!`filetest -f $gInstructionFile`)
+		PlayblastToolQuitError("Instructions file " + $gInstructionFile + " doesn't exist.");
+
+	// parse the xml
+	string $xml = readXML($gInstructionFile, 0);
+
+	string $farmNode[] = xml_getTag($xml, "farm");
+	string $sceneNode[] = PlayblastToolGetTagError($xml, "scene");
+	string $outputNode[] = PlayblastToolGetTagError($xml, "output");
+
+	// -------------------
+	// scene
+	// -------------------
+	// input file
+	string $fileNode[] = PlayblastToolGetTagError($sceneNode[0], "file");
+	$gInputScene = PlayblastToolGetVarError($fileNode[0], "file", "name");
+	$gInputScene = getPath("ConformPath", {$gInputScene});
+	if(!`filetest -f $gInputScene`)
+		PlayblastToolQuitError("Input scene " + $gInputScene + " does not exist.");
+
+	// camera
+	string $cameraNode[] = PlayblastToolGetTagError($sceneNode[0], "camera");
+	$gCamera = PlayblastToolGetVarError($cameraNode[0], "camera", "name");
+
+	// stereo camera
+	string $stereoCameraNode[] = xml_getTag($sceneNode[0], "stereoCamera");
+	$gPlayblastStereoCamera = xml_getVar($stereoCameraNode[0], "name");
+	$gIsStereo = xml_getVar($stereoCameraNode[0], "isStereoShow");
+
+	// light rig
+	string $light_rig_node[] = xml_getTag($sceneNode[0], "lightRig");
+	if (size($light_rig_node))
+	{
+		$gLightRigName = xml_getVar($light_rig_node[0], "name");
+	}
+
+	// insight callback
+	string $InsightCallbackNode[] = xml_getTag($sceneNode[0], "callback");
+	$gHost = xml_getVar($InsightCallbackNode[0], "host");
+	$gInsightCallbackPath = xml_getVar($InsightCallbackNode[0], "path");
+	$gInsightCallbackArgs = xml_getVar($InsightCallbackNode[0], "arguments");
+	string $val = xml_getVar($InsightCallbackNode[0], "media_file_id");
+	$gInsightMediaFileId = ($val != "") ? (int)$val : 0;
+
+	//if($gIsStereo)
+	//{
+	// It's a stereo show so find the stereo camera and set $gCamera to be the stereo camera.
+	//
+	//PlayblastToolGetStereoCamera();
+	//}
+
+	// reference options
+	string $referenceNode[] = xml_getTag($sceneNode[0], "references");
+	if(!size($referenceNode))
+	{
+		PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no references node.");
+		$gRefSwitchProxyToFull = false;
+		$gRefLoadAllRefs = false;
+		$gExecutePerAssetCallbacks = false;
+	}
+	else
+	{
+		string $refSwitchProxyToFull = xml_getVar($referenceNode[0], "switchProxyToFull");
+		string $refLoadAllRefs = xml_getVar($referenceNode[0], "loadAllReferences");
+		string $executePerAssetCallbacks = xml_getVar($referenceNode[0], "executePerAssetCallbacks");
+		string $switchAssetsToRender = xml_getVar($referenceNode[0], "switchToRenderRes");
+
+		$gRefSwitchProxyToFull = ($refSwitchProxyToFull == "") ? false : (int)$refSwitchProxyToFull;
+		$gRefLoadAllRefs = ($refLoadAllRefs == "") ? false : (int)$refLoadAllRefs;
+		$gExecutePerAssetCallbacks = ($executePerAssetCallbacks == "") ? false : (int)$executePerAssetCallbacks;
+		$gSwitchAssetsToRender = ($switchAssetsToRender == "") ? false : (int)$switchAssetsToRender;
+	}
+	// -------------------
+	// output
+	// -------------------
+	// target
+	string $targetNode[] = PlayblastToolGetTagError($outputNode[0], "target");
+	$gTargetImagePath = PlayblastToolGetVarError($targetNode[0], "target", "imagePath");
+	$gTargetImagePath = getPath("ConformPath", {$gTargetImagePath});
+	$gTargetMoviePath = xml_getVar($targetNode[0], "moviePath");
+	// quality
+	string $qualityNode[] = xml_getTag($outputNode[0], "quality");
+	if(!size($qualityNode))
+	{
+		PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no quality node.");
+		// use defaults
+		$gShadingMode = "shaded";
+//		$gWireframeOnShaded = 0;
+		$gSetSmoothing = false;
+		$gSmoothDivisions = 0;
+		$gLighting = 0;
+		$gHighQualityRendering = 0;
+		$gDoStereo = 1;
+		$gDoReload = 1;
+		$gDoHires = 1;
+		$gSoftwareRender = 0;
+	}
+	else
+	{
+		string $shadingMode = xml_getVar($qualityNode[0], "shadingMode");
+		string $lighting = xml_getVar($qualityNode[0], "lighting");
+		string $highQualityRendering = xml_getVar($qualityNode[0], "highQualityRendering");
+
+		string $setSmoothing = xml_getVar($qualityNode[0], "setSmoothing");
+		string $divisions = xml_getVar($qualityNode[0], "divisions");
+		string $doStereo = xml_getVar($qualityNode[0], "doStereo");
+		string $doReload = xml_getVar($qualityNode[0], "doReload");
+		string $doHires = xml_getVar($qualityNode[0], "doHires");
+
+		string $softwareRender = xml_getVar($qualityNode[0], "softwareRender");
+		string $renderGlobalsPreset = xml_getVar($qualityNode[0], "renderGlobalsPreset");
+
+		if($shadingMode == "wireframe" || $shadingMode == "textured")
+			$gShadingMode = $shadingMode;
+		else
+			$gShadingMode = "shaded";
+
+		$gLighting = ($lighting == "") ? 0 : (int)$lighting;
+		$gHighQualityRendering = ($highQualityRendering == "") ? 0 : (int)$highQualityRendering;
+		$gSetSmoothing = ($setSmoothing == "") ? false : (int)$setSmoothing;
+		$gSmoothDivisions = ($divisions == "") ? 0 : (min((int)$divisions, 2));	// No more than 2 smooth divisions
+		$gDoStereo = ($doStereo == "") ? 1 : (int)$doStereo; // default to True
+		$gDoReload = ($doReload == "") ? 1 : (int)$doReload; // default to True
+		$gDoHires = ($doHires == "") ? 1 : (int)$doHires; // default to True
+		$gSoftwareRender = ($softwareRender == "") ? 0 : (int)$softwareRender; // default to false.
+		$gRenderGlobalsPreset = $renderGlobalsPreset;
+	}
+	// resolution
+	string $resolutionNode[] = PlayblastToolGetTagError($outputNode[0], "resolution");
+	$gResWidth = (int)PlayblastToolGetVarError($resolutionNode[0], "resolution", "width");	// ### To-do: Playblast width and height must be divisible by 4
+	$gResHeight = (int)PlayblastToolGetVarError($resolutionNode[0], "resolution", "height");
+	string $aspect = xml_getVar($resolutionNode[0], "aspectRatio");
+	$gResAspect = ($aspect == "") ? ((float)$gResWidth/(float)$gResHeight) : (float)$aspect;
+
+	// output format (for frames, not movie)
+	string $formatNode[] = xml_getTag ($outputNode[0], "format");
+	if(!size($formatNode))
+	{
+		PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no format node. Defaulting to \"jpg\"");
+		$gOutputFmt = "jpg";
+	}
+	else
+	{
+		string $outputFormat = xml_getVar ($formatNode[0], "imageFormat");
+		if($outputFormat == "")
+		{
+			PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no format node. Defaulting to \"jpg\"");
+			$gOutputFmt = "jpg";
+		}
+		else
+		{
+			$gOutputFmt = $outputFormat;	// ### To-do: Validate format.
+		}
+	}
+
+	// deep playblast
+	$gDoDeepPlayblast = 0;
+	string $deepPlayblastNode[] = xml_getTag ($outputNode[0], "deepPlayblast");
+	if (size($deepPlayblastNode))
+	{
+		$gDoDeepPlayblast = int(xml_getVar($deepPlayblastNode[0], "doNamespaces"));
+	}
+
+	// --------------------------------------------------------------------- //
+	// Distribution.
+	// --------------------------------------------------------------------- //
+	int $distro_enabled = false;
+	int $subjob_count = 0;
+	if (size($farmNode))
+	{
+		string $distro_tag[] = xml_getTag($farmNode[0], "distribution");
+		string $distro_en_str = xml_getVar($distro_tag[0], "enabled");
+		if ($distro_en_str != "")
+		{
+			$distro_enabled = int($distro_en_str);
+		}
+
+		string $subjob_str = xml_getVar($farmNode[0], "subjobs");
+		$subjob_count = ($subjob_str != "") ? int($subjob_str) : 0;
+	}
+
+	int $is_subjob = ($distro_enabled && $qube_frame >= 0);
+	int $is_post = ($distro_enabled && $qube_frame < 0);
+
+	PlayblastToolMessage("$is_subjob " + $is_subjob);
+	PlayblastToolMessage("$is_post " + $is_post);
+
+	// --------------------------------------------------------------------- //
+	// Frame range
+	// --------------------------------------------------------------------- //
+	string $frameRangeNode[] = PlayblastToolGetTagError($sceneNode[0], "frameRange");
+	int $start_frame = int(PlayblastToolGetVarError($frameRangeNode[0], "frameRange", "start"));
+	int $end_frame = int(PlayblastToolGetVarError($frameRangeNode[0], "frameRange", "end"));
+	string $preroll_str = xml_getVar($frameRangeNode[0], "extraFramesAtHead");
+	int $preroll = ($preroll_str != "") ? int($preroll_str) : 0;
+	$preroll = max(1, $preroll);
+
+	// Start the preroll on this frame.
+	$gFramePreRollStart = $start_frame - $preroll;
+
+	// Determine the renderable frame range.
+	if ($is_subjob)
+	{
+		// If we're a software render and we have chunks, we are distributed.
+		int $index = $qube_frame;
+
+		// Get the frame range per subjob.
+		int $frame_range = $end_frame - $start_frame + 1;
+		int $sub_range = $frame_range / $subjob_count;
+		if ($frame_range % $subjob_count != 0)
+		{
+			$sub_range += 1;
+		}
+
+		// Get the offset based on the subjob range and the current subjob.
+		int $offset = $sub_range * $index;
+
+		// Get the start and end frame of the subjob.
+		int $sub_start_frame = $start_frame + $offset;
+		int $sub_end_frame = $sub_start_frame + $sub_range - 1;
+
+		// Restrict the values to the overall range of the shot.
+		$gFrameRangeStart = max($start_frame, min($end_frame, $sub_start_frame));
+		$gFrameRangeEnd = max($start_frame, min($end_frame, $sub_end_frame));
+
+		// We will want to bypass the post process.
+		$gBypassPostPlayblast = 1;
+	}
+	else
+	{
+		// Otherwise we're just a normal one shot.
+		$gFrameRangeStart = $start_frame;
+		$gFrameRangeEnd = $end_frame;
+
+		// See if we're a post job.
+		if ($is_post)
+		{
+			// If so, just execute the post process.
+			$gPostPlayblastOnly = 1;
+		}
+	}
+
+	PlayblastToolMessage("This playblast job will render frames: " + string($gFrameRangeStart) + "-" + string($gFrameRangeEnd) + ".");
+
+	// movie options - to grow once we have a better idea from implementing this
+	string $movieNode[] = xml_getTag ($outputNode[0], "movie");
+	if(!size($movieNode))
+	{
+		PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no movie node. No movie will be generated.");
+		$gDoMovie = false;
+	}
+	else
+	{
+		string $makeMovie = xml_getVar ($movieNode[0], "makeMovie");
+		if($makeMovie == "")
+		{
+			PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no attribute makeMovie in node movie. No movie will be generated.");
+			$gDoMovie = false;
+		}
+		else
+		{
+			$gDoMovie = (int)$makeMovie;
+			if($gDoMovie)
+			{
+				if($gTargetMoviePath == "")
+				{
+					PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no attribute moviePath in node target. No movie will be generated.");
+					$gDoMovie = false;
+				}
+				else
+				{
+					$gTargetMoviePath = getPath ("ConformPath", {$gTargetMoviePath});
+
+					string $doAudio = xml_getVar ($movieNode[0], "includeAudio");
+					string $audioPath = xml_getVar ($movieNode[0], "audioPath");
+					if($audioPath != "")
+						$audioPath = getPath ("ConformPath", {$audioPath});
+
+					$gMovieType = xml_getVar ($movieNode[0], "type");	// not doing anything with this yet.
+					string $fastStart = xml_getVar ($movieNode[0], "faststart");
+					$gFastStart = ($fastStart == "") ? 0 : (int)$fastStart;
+
+					string $movieResWidth = xml_getVar ($movieNode[0], "width");
+					$gMovieResWidth = ($movieResWidth != "") ? (int)$movieResWidth : $gResWidth;
+					string $movieResHeight = xml_getVar ($movieNode[0], "height");
+					$gMovieResHeight = ($movieResHeight != "") ? (int)$movieResHeight : $gResHeight;
+					// aspect not implemented for movies
+
+					// make sure movie res is divisible by 2 (required by ffmpeg)
+					if($gMovieResWidth != $gResWidth && $gMovieResHeight != $gResHeight)
+					{
+						$gMovieResWidth -= $gMovieResWidth % 2;
+						$gMovieResHeight -= $gMovieResHeight % 2;
+					}
+
+
+					$gDoAudio = ($doAudio == "") ? false : (int)$doAudio;
+					if($gDoAudio)
+					{
+						if($audioPath == "")
+						{
+							PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no audioPath attribute. No audio will be added to movie.");
+							$gDoAudio = false;
+						}
+						else if(!`filetest -f $audioPath`)
+						{
+							PlayblastToolMessage("Warning. Audio file " + $audioPath + " does not exist. No audio will be added to movie.");
+							$gDoAudio = false;
+						}
+						else
+						{
+							// check for 0k audio file
+							if(getFileSize($audioPath) == 0)
+							{
+								PlayblastToolMessage("Warning. Audio file " + $audioPath + " is 0k. No audio will be added to movie.");
+								$gDoAudio = false;
+							}
+							else
+								$gAudioPath = $audioPath;
+						}
+					}
+
+					// frame rate of movie
+					string $fps = xml_getVar ($movieNode[0], "fps");
+					if($fps != "film" && $fps != "ntsc" && $fps != "pal" && $fps != "game" && $fps != "ntscf")
+					{
+						PlayblastToolMessage("Warning. Invalid frame rate for movie \"" + $fps + "\". Defaulting to \"film\".");
+						$gMovieFPS = "film";
+					}
+					else
+					{
+						$gMovieFPS = $fps;
+					}
+					// encoder options
+					// $gEncoder
+					string $encoderNode[] = xml_getTag ($movieNode[0], "encoding");
+					$gEncoder = xml_getVar ($encoderNode[0], "encoder");
+					if($gEncoder == "")
+					{
+						PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " specifies no encoder. No movie will be generated.");
+						$gDoMovie = false;
+					}
+					else if($gEncoder != "ffmpeg" && $gEncoder != "mencoder")
+					{
+						PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " specifies an invalid encoder (" + $gEncoder + "). No movie will be generated.");
+						$gDoMovie = false;
+					}
+
+					if($gEncoder != "ffmpeg" && $gFastStart != 0)
+					{
+						PlayblastToolMessage("Warning. Fast Start is specified, but encoder is not ffmpeg. Fast Start is currently only supported with movies made with ffmpeg. Disabling Fast Start.");
+						$gFastStart = 0;
+					}
+					string $options = xml_getVar ($encoderNode[0], "video_options");
+					if($options == "")
+					{
+						PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no encoder options. No movie will be made.");
+						$gDoMovie = false;
+					}
+					else
+					{
+						$gEncoderVideoOptions = $options;
+					}
+					if($gDoMovie && $gDoAudio)
+					{
+						string $audio_options = xml_getVar ($encoderNode[0], "audio_options");
+						if($audio_options == "")
+						{
+							PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no encoder audio options. No audio will be added to movie.");
+							$gDoAudio = false;
+						}
+						else
+						{
+							$gEncoderAudioOptions = $audio_options;
+						}
+					}
+				}
+			}
+		}
+	}
+	// overlay
+	string $overlayNode[] = xml_getTag ($outputNode[0], "overlay");
+	if(!size($overlayNode))
+	{
+		PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no overlay node. No overlay will be generated.");
+		$gDoOverlay = false;
+	}
+	else
+	{
+		string $doOverlay = xml_getVar ($overlayNode[0], "doOverlay");
+		$gDoOverlay = ($doOverlay == "") ? false : (int)$doOverlay;
+		if($gDoOverlay)
+		{
+			string $overlayTemplate[0] = xml_getTag ($overlayNode[0], "overlayTemplate");
+			if(!size($overlayTemplate))
+			{
+				PlayblastToolMessage("Warning. Instructions file " + $gInstructionFile + " contains no overlay template. No overlay will be generated.");
+				$gDoOverlay = false;
+			}
+			else
+			{
+				$gOverlayTemplate = $overlayTemplate[0];
+			}
+		}
+	}
+
+
+
+// Example Instruction file:
+/*
+<job>
+	<scene>
+		<file name="/data/entertainment/15374_socom/animation/showWork/seq004/sg0001/004_0001_ani.ma" />
+		<frameRange start="1" end="160" />
+		<camera name="cameraMain" />
+		<references switchProxyToFull="1" loadAllReferences="0" executePerAssetCallbacks="0" />
+	</scene>
+	<output>
+		<target imagePath="/renders/entertainment/15374_socom/show/seq004/sg0001/animation/004_0001_ani" moviePath="/data/entertainment/15374_socom/animation/showWork/seq004/sg0001/playblasts/003_0001.0003.avi" />
+		<quality shadingMode="shaded" setSmoothing="1" divisions="1" />
+		<resolution width="720" height="486" aspectRatio="1.33" />
+		<format imageFormat="jpg" />
+		<movie makeMovie="1" includeAudio="1" audioPath="/data/entertainment/15374_socom/animation/showWork/seq004/sg0001/audio/004_0001.aiff" />
+		<overlay doOverlay="1" artist="John Doe" displayArtistName="1" version="004_0001_ani_12.ma" />
+	</output>
+
+</job>
+*/
+
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+proc string [] getLoadSettingsRFNs ()
+{
+	string $rfns[];
+
+	int $numLoadSettings = `selLoadSettings -q -numSettings`;
+	$rfns[0] = "";
+	for ($i=1;$i<$numLoadSettings;$i++)
+	{
+		string $loadSettingID[];
+		$loadSettingID[0] = (string)$i;
+		string $refs[] = `selLoadSettings -q -rfn $loadSettingID`;
+		$rfns[$i] = $refs[0];
+	}
+	return $rfns;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolOpenScene - open the scene. If switch proxy to full or load all references is set, do a selective preload
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolOpenScene()
+{
+	global string $gInputScene;		// The scene to playblast
+	global int $gRefSwitchProxyToFull;	// Use selective preload to switch proxy refs to full
+	global int $gRefLoadAllRefs;		// Load all references
+	global string $gPlayblastPreCallback; // if it exists, this will be the path to the pre playblast callback
+	global string $gPlayblastPostCallback; // if it exists, this will be the path to the post playblast callback
+
+	//Cycle check test - 01/19/07 - JSA
+	cycleCheck -e off;
+
+	// Disable loading of saved UI configuration - 03.04.2011 - JBarrett
+	global int $gUseScenePanelConfig;
+	$gUseScenePanelConfig = false;
+	file -uc false;
+
+
+	// get the ref nodes and namespaces in the file
+	string $avail_namespaces[];
+	string $avail_refNodes[];
+	assetListFromMa ($gInputScene,$avail_namespaces,$avail_refNodes,{},{});
+
+	if($gRefSwitchProxyToFull || $gRefLoadAllRefs)
+	{
+		// selective preload
+		file -f -ignoreVersion -o -buildLoadSettings $gInputScene;
+		int $numLoadSettings = `selLoadSettings -q -numSettings`;
+
+		// loop through references...0 is the parent scene, so leave this alone
+		for($i = 1; $i < $numLoadSettings; $i += 1)
+		{
+			string $loadSettingID[1] = {string($i)};
+
+			if($gRefSwitchProxyToFull)
+			{
+				string $proxyTags[] = `selLoadSettings -q -proxySetTags $loadSettingID`;
+				print $proxyTags;
+				if(size($proxyTags))
+				{
+					if(stringArrayFindIndex ("Full", $proxyTags) != -1)
+					{
+						PlayblastToolMessage("selLoadSettings -e -activeProxy \"Full\" " + $loadSettingID[0]);
+						selLoadSettings -e -activeProxy "Full" $loadSettingID;
+					}
+				}
+
+			}
+		}
+		// Now load the scene
+		file -f -ignoreVersion -pmt false -o -loadSettings "implicitLoadSettings" $gInputScene;
+
+		// Delete the cached rigs that are in the file
+		AnimSlicesDeleteCachedRigs($avail_namespaces, $avail_refNodes);
+
+		if($gRefLoadAllRefs)
+		{
+			// now load all references
+			for ($i = 0; $i < size($avail_refNodes); $i++)
+			{
+				catch (`file -lr $avail_refNodes[$i]`);
+			}
+		}
+	}
+	else
+	{
+		file -f -ignoreVersion -pmt false -o $gInputScene;
+	}
+
+    // turn cache visiblity, colors and HQ graphics on and then resync
+    AnimSlicesDashboard.clearAllSettings();
+	int $cacheVisibility = 1;
+	int $cacheColorFromFile = 1;
+	AnimSlicesForceAllCaches($cacheVisibility, $cacheColorFromFile);
+    AnimSlicesSetHQGraphicsAllCaches(1);
+    AnimSlicesUpdateAllCaches();
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolLookupImageFormat - look up the number for the given image format key, and print a warning if a supported one is not found (switch to jpg in this case)
+// ---------------------------------------------------------------------------------------------------
+global proc int PlayblastToolLookupImageFormat(string $key)
+{
+	// image type lookup
+	/*
+	Alias PIX (als) - 6
+	Cineon (cin) - 11
+	DDS (dds) - 35
+	EPS (eps) - 9
+	GIF (gif) - 0
+	JPEG (jpg) - 8
+	Maya IFF (iff) - 7
+	Maya16 IFF (iff) - 10
+	PSD (psd) - 31
+	PSD Layered (psd) - 36
+	PNG (png) - 32
+	Quantel (yuv) - 12
+	RLA (rla) - 2
+	SGI (sgi) - 5
+	SGI16 (sgi) - 13
+	SoftImage (pic) - 1
+	Targa (tga) - 19
+	Tiff (tif) - 3
+	Tiff16 (tif) - 4
+	Windows Bitmap (bmp) - 20
+
+	The playblast tool will only support the following -
+	jpg, iff, rla, sgi, tga, tif
+
+	For future versions of Maya, that have changed values - the following will spit them out:
+
+	string $items[] = `optionMenuGrp -q -itemListShort imageMenuMayaSW`;
+	for($i = 0; $i < size($items); $i += 1)
+	{
+		int $val = `menuItem -q -data $items[$i]`;
+		string $label = `menuItem -q -label $items[$i]`;
+
+		print($label + " - " + $val + "\n");
+
+	}
+
+	*/
+
+	// include a couple of alternative representations - such as jpeg in addition to jpg, tiff as well as tif, just so we don't not find our format for trivial reasons!
+	string $lookup[] = {
+		"jpg", "8",
+		"jpeg", "8",
+		"iff", "7",
+		"rla", "2",
+		"sgi", "5",
+		"tga", "19",
+		"tif", "3",
+		"tiff", "3",
+		"png", "32",
+		"PNG", "32"
+	};
+
+	int $index = stringArrayFindIndex(tolower($key), $lookup);
+	if($index == -1)
+	{
+		PlayblastToolMessage("Warning. Unsupported output format " + $key + ". Defaulting to \"jpg\"");
+		$index = stringArrayFindIndex ("jpg", $lookup);
+	}
+
+	return (int)$lookup[$index+1];
+}
+proc int PlayblastTool.setCurrentRenderer(string $renderer)
+{
+	/*
+		Set the given renderer in the render globals.
+
+		@param renderer: The renderer to use.
+		@type renderer: string
+
+		@returns: 1 if successful.
+		@rtype: int
+
+	*/
+	setAttr "defaultRenderGlobals.currentRenderer" -type "string" $renderer;
+
+	PlayblastToolMessage("Current renderer: " + getAttr("defaultRenderGlobals.currentRenderer"));
+
+	return 1;
+}
+proc int PlayblastTool.loadRenderGlobalsPreset(string $preset_name)
+{
+	/*
+		Load the render globals with the given preset name.
+
+		@param preset_name: The name of the render globals preset.
+		@type preset_name: string
+
+		@returns: 1 if successful.
+		@rtype: int
+
+	*/
+	PlayblastToolMessage("Loading render globals preset '" + $preset_name + "'.");
+
+	string $path = getPath("ProjectPresetDir", {}) + "/renderGlobals";
+
+	// Iterate over the render globals nodes.
+	// string $renderer = currentRenderer();
+	string $renderer = "mayaSoftware";
+	setAttr -type "string" "defaultRenderGlobals.currentRenderer" "mayaSoftware";
+	string $nodes[] = `renderer -q -globalsNodes $renderer`;
+	for ($node in $nodes)
+	{
+		// Derive the path to the preset file.
+		string $node_type = nodeType($node);
+		string $basename = $node_type + "Preset_" + $preset_name + ".mel";
+		string $preset = $path + "/" + $basename;
+		if (`filetest -f $preset`)
+		{
+			// If it exists, select the node and apply the preset.
+			select -r $node;
+			PlayblastToolMessage($preset);
+			eval("source \"" + $preset + "\";");
+		}
+	}
+
+	return 1;
+}
+proc PlayblastTool.unlockAllAttrs(string $node)
+{
+	/*
+		Unlock all attributes on the given node.
+
+		@param node: The node to unlock.
+		@type node: string
+
+	*/
+	string $attrs[] = listAttr($node);
+	for ($attr in $attrs)
+	{
+		string $plug = $node + "." + $attr;
+		setAttr -lock false $plug;
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolSetupRenderGlobals - setup the render globals
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSetupRenderGlobals()
+{
+	global string $gOutputFmt;		// Output format for frames.
+	global int $gResWidth;			// x resolution to playblast at
+	global int $gResHeight;			// y resolution to playblast at
+	global float $gResAspect;		// aspect ratio
+	global int $gFrameRangeStart;	// Start frame to playblast
+	global int $gFrameRangeEnd;		// End frame (inclusive) to playblast
+	global int $gSoftwareRender;    // Whether or not to do a software render.
+	global string $gRenderGlobalsPreset;   // The render globals preset to load.
+
+
+	int $val = PlayblastToolLookupImageFormat($gOutputFmt);	// lookup the number
+
+	// Unlock the render globals nodes.
+	PlayblastTool.unlockAllAttrs("defaultRenderGlobals");
+	PlayblastTool.unlockAllAttrs("defaultResolution");
+
+	// renderer
+	if ($gSoftwareRender)
+	{
+		PlayblastTool.setCurrentRenderer("mayaSoftware");
+	}
+
+	// globals preset
+	if (size($gRenderGlobalsPreset))
+	{
+		PlayblastTool.loadRenderGlobalsPreset($gRenderGlobalsPreset);
+	}
+
+	// render globals
+	setAttr "defaultRenderGlobals.animation" yes;
+	setAttr "defaultRenderGlobals.endFrame" $gFrameRangeEnd;
+	setAttr "defaultRenderGlobals.extensionPadding" 4;
+	setAttr "defaultRenderGlobals.imageFormat" $val;
+	setAttr "defaultRenderGlobals.outFormatControl" 0;
+	setAttr "defaultRenderGlobals.periodInExt" true;
+	setAttr "defaultRenderGlobals.putFrameBeforeExt" true;
+	setAttr "defaultRenderGlobals.startFrame" $gFrameRangeStart;
+	setAttr "defaultRenderGlobals.useFrameExt" true;
+
+	//multi processing
+	//get num of local cpus
+	string $buffer[] = stringToStringArray(`system("grep \"model name\" /proc/cpuinfo")`, "\n");
+	//force software render to use all cpus
+	setAttr "defaultRenderGlobals.numCpusToUse" (size($buffer));
+	//
+
+	// resolution
+	setAttr "defaultResolution.aspectLock" true;
+	setAttr "defaultResolution.deviceAspectRatio" $gResAspect;
+	setAttr "defaultResolution.height" $gResHeight;
+	setAttr "defaultResolution.width" $gResWidth;
+
+	// workspace
+	string $tmp_dir = getPath("TempFile", {});
+	workspace -rt "images" $tmp_dir;
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolCheckCamera - check camera a) that it's there, b) that there are no multiples, and pop the shape name into a global variable
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCheckCamera()
+{
+	global string $gCamera;			// Cam to playblast thru
+	global string $gCameraShape;
+
+	// check to see if it's a stereo camera show
+	PlayblastToolGetStereoCamera();
+
+	// does it exist?
+	if(!`objExists $gCamera`)
+	{
+		PlayblastToolQuitError("Camera " + $gCamera + " does not exist.");
+	}
+	// are there multiples?
+//	if(size (`ls ("*" + $gCamera)`) > 1)
+	// The aboce will throw faulty error in the case of the stereo cam, where the L_cam and R_cam
+	// will be picked up by *cam.  I believe this is just looking for muliple cameras with the same
+	// name (different proper paths, e.g. foo|cam and bob|cam).
+	if(size(`ls $gCamera`) > 1)
+	{
+		PlayblastToolQuitError("Found more than one camera named " + $gCamera + ".");
+	}
+	// is it a camera?
+	string $children[] = `listRelatives -c -pa $gCamera`;
+	$children = `ls -type camera $children`;
+
+	if(!size($children))
+		PlayblastToolQuitError("Node " + $gCamera + " is not a camera.");
+
+	$gCameraShape = $children[0];
+
+	// hide things we don't want shown
+	string $attrs[] = {
+		"displayFilmGate",
+		"displaySafeAction",
+		"displayResolution",
+		"displayFieldChart",
+		"displaySafeTitle",
+		"displayFilmPivot",
+		"displayFilmOrigin"
+		};
+	for($i = 0; $i < size($attrs); $i += 1)
+	{
+		catch(`setAttr -l false ($gCameraShape + "." + $attrs[$i])`);
+		catch(`setAttr ($gCameraShape + "." + $attrs[$i]) false`);
+	}
+
+	for($cam in `ls -type "camera"`)
+	{
+		catch(`setAttr ($cam + ".visibility") 0`);
+	}
+
+	// Set the camera to overscan @ 1.0
+	catch(`setAttr -l 0 ($gCameraShape + ".renderable")`);
+	catch(`setAttr ($gCameraShape + ".renderable") 1`);
+	catch(`setAttr -l 0 ($gCameraShape + ".filmFit")`);
+	catch(`setAttr ($gCameraShape + ".filmFit") 3`);
+	catch(`setAttr -l 0 ($gCameraShape + ".overscan")`);
+	catch(`setAttr ($gCameraShape + ".overscan") 1.0`);
+
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolRemapPaths - take care of any paths that dirmapping doesn't
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolRemapPaths()
+{
+	// imageplanes
+	string $nodes[] = `ls -type imagePlane`;
+	for($i = 0; $i < size($nodes); $i += 1)
+	{
+		string $path = `getAttr ($nodes[$i] + ".imageName")`;
+		$path = getPath ("ConformPath", {$path});
+		setAttr -type "string" ($nodes[$i] + ".imageName") $path;
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolSetupModelEditor - set up the model editor
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSetupModelEditor()
+{
+	global string $gCamera;
+	global string $gCameraShape;
+	global string $gShadingMode;		// wireframe, shaded, or textured.
+//	global int $gWireframeOnShaded;
+	global int $gLighting;			// Open GL lighting
+	global int $gHighQualityRendering;	// Hi Quality GL renderer
+	global string $gMainPane;		// Alias
+	global int $gDoOverlay;			// Determines whether we will show locators
+	global int $gIsStereo;			// If 1 then playblast through the stereo camera
+	global string $gPlayblastStereoCameraLeft;
+	global string $gPlayblastStereoCameraRight;
+	global string $gInputScene;     // The scene to playblast
+
+	global string $gRFXPlayblastModelPanel;
+	global int $gConsiderDisplayLayers;
+
+
+	if (`about -batch`)
+	{
+		return;
+	}
+
+	// turn off the hud
+	headsUpDisplay -lv false;
+
+	string $dispAppear = "smoothShaded";
+	int $dispTex = false;
+
+	if($gShadingMode == "wireframe")
+		$dispAppear = "wireframe";
+	if($gShadingMode == "textured")
+		$dispTex = true;
+
+	// switch to a single pane
+	switchPanes single 0;
+	string $panel1 = `paneLayout -q -p1 $gMainPane`;
+	$gRFXPlayblastModelPanel = $panel1;
+
+
+
+	if($gIsStereo)
+	{
+//		PlayblastToolMessage(" Setting up stereo view port...");
+//		/*
+//		PlayblastToolMessage("	Setting up stereo view port via python...");
+//		print("  Setting up stereo view port via python...\n");
+//		PlayblastToolMessage("	import...");
+//		python("import maya.mel as mel");
+//		PlayblastToolMessage("	stereoCameraSwitchToCamera...");
+//		python("mel.eval('stereoCameraSwitchToCamera " + $gCamera + " " + $panel1 + "')");
+//		PlayblastToolMessage("	from maya.app...");
+//		python("from maya.app.stereo import stereoCameraCustomPanel");
+//		PlayblastToolMessage("	stereoCameraCustromPanel.switch.");
+//		python("stereoCameraCustomPanel.switchToCamera(\"" + $gCamera + "\", \"StereoPanelEditor\")");
+//		PlayblastToolMessage("Done setting up stereo view port via python.");
+//		print("Done setting up stereo view port via python.\n");
+//		*/
+//		string $cmd = "source buildStereoLookthruMenu.mel;";
+//		eval $cmd;
+//		print("sourcing buildStereoLookthruMenu\n");
+//
+//		PlayblastToolMessage("	 stereoCameraSwitchToCamera " + $gCamera + " " + $panel1);
+//		catch(`stereoCameraSwitchToCamera $gCamera $panel1`);
+//		PlayblastToolMessage("Done setting up stereo view port.");
+//
+//		$panel1 = "StereoPanelEditor"; // the way alias gets the name of this panle is with `getPanel -withFocus` + "Editor"...
+//		$gRFXPlayblastModelPanel = $panel1;
+
+		print ("PlayblastTool: lookThroughModelPanel \""+$gPlayblastStereoCameraLeft+"\" \""+$panel1+"\"\n");
+		lookThroughModelPanel $gPlayblastStereoCameraLeft $panel1;
+
+	}
+	else
+	{
+		lookThroughModelPanel $gCameraShape $panel1;
+	}
+
+
+	string $displayLights = "default";
+	// lighting
+	if($gLighting)
+	{
+		// look for visible lights in the scene before turning on lighting
+		int $buf = $gConsiderDisplayLayers;
+		$gConsiderDisplayLayers = true;
+		int $okforLighting = false;
+		string $allLights[] = `ls -type "light"`;
+		for($i = 0; $i < size($allLights); $i += 1)
+		{
+			if(isVisible($allLights[$i]))
+			{
+				$okforLighting = true;
+				break;
+			}
+		}
+		if($okforLighting)
+			$displayLights = "all";
+		else
+			PlayblastToolMessage("Lighting requested but there are no visible lights in the scene. Ignoring...");
+
+		$gConsiderDisplayLayers = $buf;
+	}
+
+	// turn off everything that we don't want to see, turn on everything we do.
+	modelEditor -e
+//		-camera "front"
+//		-bufferMode "double"
+//		-maxConstantTransparency 1
+//		-colorResolution 4 4
+//		-bumpResolution 4 4
+//		-textureCompression 0
+//		-transpInShadows 0
+//		-cullingOverride "none"
+//		-lowQualityLighting 0
+//		-maximumNumHardwareLights 0
+//		-occlusionCulling 0
+//		-shadingModel 0
+//		-useBaseRenderer 0
+//		-useReducedRenderer 0
+//		-smallObjectCulling 0
+//		-smallObjectThreshold -1
+//		-interactiveDisableShadows 0
+//		-interactiveBackFaceCull 0
+//		-fluids 0
+//		-hairSystems 0
+//		-follicles 0
+//		-nCloths 0
+//		-nParticles 0
+//		-nRigids 0
+//		-dynamicConstraints 0
+
+		// Shading
+		-displayAppearance $dispAppear
+		-activeOnly 0
+		-useDefaultMaterial 0
+		-wireframeOnShaded 0 //$gWireframeOnShaded
+		-xray 0
+		-jointXray 0
+		-activeComponentsXray 0
+		-sortTransparent 1
+		-transparencyAlgorithm "perPolygonSort"
+		-useInteractiveMode 0
+		-backfaceCulling 0
+		-smoothWireframe 0
+		-lineWidth 1
+
+		// Hardware Texturing
+		-displayTextures $dispTex
+		-textureAnisotropic 0
+		-textureHilight 1
+		-textureSampling 1
+		-textureDisplay "modulate"
+		-textureMaxSize 4096
+
+		// Hardware Fog
+		-fogging 0
+		-fogSource "fragment"
+		-fogMode "linear"
+		-fogStart 0
+		-fogEnd 100
+		-fogDensity 0.1
+		-fogColor 0.5 0.5 0.5 1
+
+		// Lighting
+		-displayLights $displayLights
+		-twoSidedLighting 1
+		-shadows 0
+
+		// Isolate Select
+		-viewSelected 0
+
+		// Show
+		-nurbsCurves 0
+		-nurbsSurfaces 1
+		-polymeshes 1
+		-subdivSurfaces 1
+		-planes 0
+		-lights 0
+		-cameras 1
+		-joints 0
+		-ikHandles 0
+		-deformers 0
+		-dynamics 1
+		-hairSystems 0
+		-locators $gDoOverlay
+		-dimensions 0
+		-pivots 0
+		-handles 0
+		-textures 0
+		-strokes 0
+		-manipulators 0
+		-controlVertices 1
+		-hulls 1
+		-grid 0
+		-headsUpDisplay 1
+		-selectionHiliteDisplay 1
+
+		$panel1;
+
+//	PlayblastToolMessage("Setting up modelEditor.");
+
+	// High Quality Rendering
+	if ($gHighQualityRendering == 0)
+	{
+		modelEditor -e -rendererName "base_OpenGL_Renderer" $panel1;
+		setAttr "hardwareRenderingGlobals.multiSampleEnable" 0;
+	}
+	if($gHighQualityRendering == 1)
+	{
+		PlayblastToolMessage("Rendering with High Quality");
+		modelEditor -e -rendererName "hwRender_OpenGL_Renderer" $panel1;
+		setAttr "hardwareRenderingGlobals.multiSampleEnable" 0;
+	}
+	if ($gHighQualityRendering == 2)
+	{
+		PlayblastToolMessage("Rendering with Viewport 2.0");
+		ActivateViewport20;
+		setAttr "hardwareRenderingGlobals.multiSampleEnable" 1;
+		// Use all lights and display shadows otherwise why use viewport 2.0
+		DisplayLight;
+		modelEditor -e -shadows true $panel1;
+	}
+
+	// apply shading mode
+//	modelEditor -e -displayAppearance $dispAppear -displayTextures $dispTex -useDefaultMaterial off $panel1;
+//	PlayblastToolMessage("modelEditor -e -displayAppearance " + $dispAppear + " -displayTextures " + $dispTex + " -useDefaultMaterial off " + $panel1);
+
+	// set up the anaplyph mode if we are doing stereo cameras
+	//
+//	if($gIsStereo)
+//	{
+//		PlayblastToolMessage("Setting up anaplyph...");
+//		print("Setting up anaplyph...\n");
+//		stereoCameraView -e -displayMode anaglyph $panel1;
+//		//python("stereoCameraCustomPanel.stereoCameraViewCallback( \"StereoPanelEditor\", \"{'displayMode': 'anaglyph'}\" )");
+//		PlayblastToolMessage("Setting stereo panel mode to anaplyph for panel " + $panel1);
+//	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolSourceScript - source the script. This has to be it's own proc, because you can't directly catch a source statement
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSourceScript(string $file)
+{
+	eval("source \"" + $file + "\"");
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolExecutePerAssetCallbacks - execute per asset callbacks if desired and if they exist
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolExecutePerAssetCallbacks()
+{
+	global int $gExecutePerAssetCallbacks;	// Execute per asset callbacks if any exist
+
+	if(!$gExecutePerAssetCallbacks)
+	{
+		PlayblastToolMessage("Per-Asset Callbacks disabled.");
+		return;
+	}
+
+	string $refs[] = `file -q -r`;
+	for($i = 0; $i < size($refs); $i += 1)
+	{
+		string $ns = `file -q -ns $refs[$i]`;
+		string $assetName = getPath ("AssetNameFromFilename", {$refs[$i]});
+		string $assetType = getPath ("AssetTypeFromFilename", {$refs[$i]});
+
+		string $assetInfoDir = getPath ("AssetInfoDir", {$assetType, $assetName});
+		string $callback = $assetInfoDir + "/" + $assetName + "PlayblastCallback.mel";
+
+		if(!`filetest -f $callback`)
+		{
+			PlayblastToolMessage("No callback found for " + $assetName + ".");
+			continue;
+		}
+		int $success = !(catch(PlayblastToolSourceScript($callback)));
+		if($success)
+		{
+			string $procName = $assetName + "PlayblastCallback";
+			if(!exists($procName))
+			{
+				PlayblastToolMessage("Callback " + $callback + " found. But no global proc " + $procName + ". Callback will not be executed.");
+				continue;
+			}
+			PlayblastToolMessage("Executing per-asset callback " + $callback + ". ");
+			$success = !(catch(eval($procName + " \"" + $ns + "\"")));
+			if(!$success)
+			{
+				PlayblastToolMessage("Error executing " + $callback + ". Continuing..");
+				continue;
+			}
+		}
+		else
+		{
+			PlayblastToolMessage("Warning: Error sourcing callback " + $callback + ". Callback will not be executed.");
+		}
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolCheckMakeDir - See if the directory exists, if not make it, then check that we were able to
+// ---------------------------------------------------------------------------------------------------
+global proc int PlayblastToolCheckMakeDir(string $dir)
+{
+	// 02/02/07 - make the output dir subfolders
+	global string $gInputScene;				// Output format for frames.
+	global string $gOutputFmt;				// Output format for frames.
+	global int $gFrameRangeStart;			// Start frame to playblast
+	global int $gFrameRangeEnd;				// End frame (inclusive) to playblast
+	global string $gTargetMoviePath;
+
+	// input will be something like /data/development/17199_pipeline_dir_test_new/cg/sequences/sq9000/sh0010/movies/lay
+	// in old dir structure, input will be something like:
+	// /data/entertainment/16252_webosaurs/animation/showWork/seqBATL/sg1010/playblasts
+	// this is also called to make the output directory for frames, in this case the input will be something like:
+	// new structure: /data/development/17199_pipeline_dir_test_new/cg/sequences/sq9000/sh0010/movies/lay/frames
+	// old structure: /renders/entertainment/16252_webosaurs/show/seqBATL/sg1010/animation/standard/
+
+	// also gTargetMoviePath will be:
+	//
+	// /data/development/17199_pipeline_dir_test_new/cg/sequences/sq9000/sh0010/movies/lay/9000_0010_lay.0001.mov
+	// or /data/entertainment/16252_webosaurs/animation/showWork/seqBATL/sg1010/playblasts/BATL_1010_ani.0011.mov
+
+
+
+	string $sequence = getPath("SequenceFromFilename", {$gInputScene});
+	string $shot = getPath("ShotFromFilename", {$gInputScene});
+	string $archiveDir = $dir + "/archive";
+	string $playblastDir = getPath("ShotMovieDir", {$sequence, $shot});
+
+	string $tmp = dirname ($gTargetMoviePath);
+	int $isMovieDir = (getPath ("ConformPath", {$dir}) == getPath ("ConformPath", {$tmp}));
+
+//	PlayblastToolMessage("DEBUG: PlayblastToolCheckMakeDir: dir = " + $dir);
+//	PlayblastToolMessage("DEBUG: PlayblastToolCheckMakeDir: isMovieDir = " + $isMovieDir);
+
+	if(`filetest -d $dir`)
+	{
+		//Since we now create our archives up front, we should delete prexisting frames from this folder
+		//to guarantee we don't have old frames left hanging around after a change in editorial
+		//This does not yet handle a second file type (like tga)
+		if(!$isMovieDir)
+		//if(!`gmatch $dir "*playblasts*"`)
+		{
+			// Need to delete 'extra' frames in the post process.
+			// string $path = $dir + "/";
+			// string $file;
+			// string $fileSpec = "*." + $gOutputFmt;
+			// string $fileList[] = `getFileList -fld $path -fs $fileSpec`;
+			// for($file in $fileList)
+			// {
+			// 	$file = $path + $file;
+			// 	sysFile -delete $file;
+			// }
+			// PlayblastToolMessage("Deleted frames in " + $path + " from previous playblast");
+
+//			if(($gFrameRangeEnd - $gFrameRangeStart) < 1000)
+//			{
+//				//Touch empty placeholders of the correct frame range.	These will be written over in a minute.
+//				string $temp_file;
+//				for($i = $gFrameRangeStart; $i <= $gFrameRangeEnd; $i += 1)
+//				{
+//					//Use getPath?
+//					$temp_file = $dir + "/" + $sequence + "_" + $shot + "." + padNumber($i, 4) + "." + $gOutputFmt + "\n";
+//					system("touch " + $temp_file);
+//				}
+//			}
+//			else
+//			{
+				PlayblastToolMessage("Pre-playblast frame creation disabled.");
+//			}
+		}
+		return 1;
+	}
+	else
+		sysFile -md $dir;
+
+	if(!`filetest -d $dir`)
+		PlayblastToolQuitError("Couldn't create output directory " + $dir + ". Check the permissions.");
+
+	//Skip creating /archive and /playblast subfolders if $dir is a /playblasts folder
+	if(!$isMovieDir)
+	{
+		sysFile -md $archiveDir;
+		if(!`filetest -d $archiveDir`)
+			PlayblastToolQuitError("Couldn't create output directory " + $archiveDir + ". Check the permissions.");
+
+		sysFile -md $playblastDir;
+		if(!`filetest -d $playblastDir`)
+			PlayblastToolQuitError("Couldn't create output directory " + $playblastDir + ". Check the permissions.");
+	}
+
+	return 0;
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolArchiveDir - See if the archive directory exists, if not make it and move the old frames
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolArchiveDir(string $dir, int $timestamp)
+{
+	string $archiveDir = $dir + "/archive/" + $timestamp;
+
+	sysFile -md $archiveDir;
+
+	if(!`filetest -d $archiveDir`)
+		PlayblastToolQuitError("Couldn't create archive directory " + $archiveDir + ". Check the permissions.");
+
+	catch(`system("/bin/mv " + $dir + "/*.png " + $archiveDir)`);
+	//catch(`system("/bin/mv " + $dir + "/*.tga " + $archiveDir)`);
+
+}
+// -----------------------------------------------------------------------------------------------------------
+// PlayblastToolVersionDir - See if the versioned directory exists, if not make it and copy the current frames
+// -----------------------------------------------------------------------------------------------------------
+global proc PlayblastToolVersionDir()
+{
+	print("No tool version dir process\n");
+	return;
+	/*
+	global string $gTargetMoviePath;
+	global string $gTargetImagePath;
+
+	print("PlayblastToolVersionDir started.\n");
+
+	//From $gTargetMoviePath get the playblast version
+	string $buffer[];
+	$numTokens = tokenize((basename($gTargetMoviePath, "")), ".", $buffer);
+	string $version_only = $buffer[1];
+	string $version = $buffer[0] + "_" + $buffer[1];
+
+	//From $gTargetImagePath get the path to the playblast render folder
+	string $dir = dirname($gTargetImagePath);
+	print("$dir = " + $dir + "\n");
+
+	//Put it together for the the full $versionDir path
+	string $versionDir = $dir + "/archive/" + $version; //we may move this up a level and discard the archive folder
+
+	// If the version dir exists, empty it out.
+	if(`filetest -d $versionDir`)
+	{
+		// use xargs when deleting large numbers of files
+		catch(`system("ls " + $versionDir + "/*.png | xargs rm")`);
+		string $file;
+		string $fileList[] = `getFileList -fld $dir -filespec "*.png"`;
+		for($file in $fileList)
+		{
+			$numTokens = tokenize($file, ".", $buffer);
+			catch(`system("/bin/cp " + $dir + $file + " " + $versionDir + "/" + $version + "." + $buffer[1] + "." + $buffer[2])`);
+		}
+	}
+	// If not, create it.
+	else
+	{
+		sysFile -md $versionDir;
+		if(!`filetest -d $versionDir`)
+		{
+			PlayblastToolQuitError("Couldn't create versioned directory " + $versionDir + ". Check the permissions.");
+		}
+		else
+		{
+			string $file;
+			string $fileList[] = `getFileList -fld $dir -filespec "*.png"`;
+			for($file in $fileList)
+			{
+				$numTokens = tokenize($file, ".", $buffer);
+				catch(`system("/bin/cp " + $dir + $file + " " + $versionDir + "/" + $version + "." + $buffer[1] + "." + $buffer[2])`);
+			}
+		}
+	}
+
+	string $fileList[] = `getFileList -fld ($dir + "/") -fs "*.png"`;
+	for($file in $fileList)
+	{
+		$numTokens = tokenize($file, ".", $buffer);
+		//catch(`system("/bin/cp " + $dir + "/" + $file + " " + $versionDir + "/" + $version + "." + $buffer[1] + "." + $buffer[2])`);
+		string $src_file = $dir + "/" + $file;
+		string $dst_file = $versionDir + "/" + $buffer[0] + "_" + $version_only + "." + $buffer[1] + "." + $buffer[2];
+		evalEcho("sysFile -mov \"" + $dst_file + "\" \"" + $src_file + "\";");
+
+		string $link_file = "archive/" + $version + "/" + $buffer[0] + "_" + $version_only + "." + $buffer[1] + "." + $buffer[2];
+		evalEcho("system(\"ln -s " + $link_file + " " + $src_file + "\");");
+	}
+	*/
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolDeepPlayblastSetup - setup namespace render layer and make deep playblast xml file
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolDeepPlayblastSetup()
+{
+    global string   $gInputScene;           // the scene to playblast
+    global int  $gDoDeepPlayblast;      // deep playblast
+    global string $gNamespaceRenderLayer;   // name of the render layer that has namespace info coded
+    global string $gMeshesWithColorsOn[];
+    global string $gGpuMeshes[];
+    global string $gTargetMoviePath;
+    global string $gDeepPlayblastMoviePath;
+
+
+    if ($gDoDeepPlayblast)
+    {
+        string $strucfile = "";
+        int $temp_strucfile = 0;
+        string $seq = getPath("SequenceFromFilename", {$gInputScene});
+        string $shot = getPath("ShotFromFilename", {$gInputScene});
+        string $comp = getPath("ComponentFromFilename", {$gInputScene});
+        if ($comp == "lay") {
+            // create a temporary structure file from the current maya file
+            $temp_strucfile = 1;
+            $strucfile = getPath("TempFileUnique", {"strucfile.xml"});
+            exportStructure($seq, $shot, $strucfile);
+        }
+        else {
+            // use the regular structure file
+            $strucfile = getPath("ShotInfoDir",{$seq,$shot}) + "/" + $seq + "_" + $shot + "_structure.xml";
+        }
+
+        eval("source \"DeepPlayblastUtilities.mel\"");
+
+        $gNamespaceRenderLayer = DeepPlayblastMakeNamespaceRenderLayer($strucfile, $gGpuMeshes);
+
+        if ($gNamespaceRenderLayer == "") {
+            PlayblastToolWarning("Failed to create render layer for Deep Playblast.");
+            clear $gGpuMeshes;
+            $gDoDeepPlayblast = 0;
+        }
+        else {
+            clear $gMeshesWithColorsOn;
+            string $allmeshes[] = `ls -type "mesh"`;
+            for ($obj in $allmeshes)
+            {
+                int $displayColors = `getAttr ($obj+".displayColors")`;
+                if ($displayColors)
+                {
+                    $gMeshesWithColorsOn[size($gMeshesWithColorsOn)] = $obj;
+                }
+            }
+
+            $gDeepPlayblastMoviePath = `substitute "mov$" $gTargetMoviePath "deep.mov"`;
+            string $playblastXml = DeepPlayblastMakeXML($strucfile, $gDeepPlayblastMoviePath, "2");
+            string $xmlFilename = `substitute "mov$" $gTargetMoviePath "xml"`;
+            if ($comp == "lay" && `filetest -f $xmlFilename`) {
+                // the xml file already exists and we are in layout,
+                // check if the file has slices, and if it does, back it up
+                string $xml = readXML($xmlFilename, 0);
+                string $slices[] = xml_getTag($xml, "Slice");
+                if (size($slices) > 0) {
+                    int $vers = 1 + int(getVersion("FromFilenameGeneric", {$xmlFilename}));
+                    string $versStr = padNumber($vers,4);
+                    string $backupFilename = `substitute "xml$" $xmlFilename ($versStr+".xml")`;
+                    sysFile -cp $backupFilename $xmlFilename;
+                }
+            }
+            writeFile($xmlFilename, $playblastXml);
+        }
+
+        if ($temp_strucfile) {
+            sysFile -delete $strucfile;
+        }
+    }
+}
+
+proc pushRenderLayer(string $renderLayer)
+{
+	global string $gRFXPlayblastModelPanel;
+	global string $gMeshesWithColorsOn[];
+    global string $gGpuMeshes[];
+
+	// saved settings
+	global string $gOldRenderLayer;
+	global int $gOldDisplayTextures;
+	global float $gOldBackgroundColor[];
+	global float $gOldBackgroundTopColor[];
+	global float $gOldBackgroundBottomColor[];
+
+	$gOldRenderLayer = `editRenderLayerGlobals -q -currentRenderLayer`;
+	$gOldDisplayTextures = `modelEditor -q -displayTextures $gRFXPlayblastModelPanel`;
+	$gOldBackgroundColor = `displayRGBColor -q "background"`;
+	$gOldBackgroundTopColor = `displayRGBColor -q "backgroundTop"`;
+	$gOldBackgroundBottomColor = `displayRGBColor -q "backgroundBottom"`;
+
+	editRenderLayerGlobals -currentRenderLayer $renderLayer;
+	modelEditor -edit -displayTextures false $gRFXPlayblastModelPanel;
+	displayRGBColor "background" 0 0 0;
+	displayRGBColor "backgroundTop" 0 0 0;
+	displayRGBColor "backgroundBottom" 0 0 0;
+
+	for ($obj in $gMeshesWithColorsOn)
+	{
+		setAttr ($obj+".displayColors") 0;
+	}
+
+	DeepPlayblastHandleGpuMeshRenderLayer($gGpuMeshes, 1);
+	DeepPlayblastPushNamespaceMaterials();
+}
+
+proc popRenderLayer()
+{
+	global string $gRFXPlayblastModelPanel;
+	global string $gMeshesWithColorsOn[];
+    global string $gGpuMeshes[];
+
+	// saved settings
+	global string $gOldRenderLayer;
+	global int $gOldDisplayTextures;
+	global float $gOldBackgroundColor[];
+	global float $gOldBackgroundTopColor[];
+	global float $gOldBackgroundBottomColor[];
+
+	editRenderLayerGlobals -currentRenderLayer $gOldRenderLayer;
+	modelEditor -edit -displayTextures $gOldDisplayTextures $gRFXPlayblastModelPanel;
+	displayRGBColor "background" $gOldBackgroundColor[0] $gOldBackgroundColor[1] $gOldBackgroundColor[2];
+	displayRGBColor "backgroundTop" $gOldBackgroundTopColor[0] $gOldBackgroundTopColor[1] $gOldBackgroundTopColor[2];
+	displayRGBColor "backgroundBottom" $gOldBackgroundBottomColor[0] $gOldBackgroundBottomColor[1] $gOldBackgroundBottomColor[2];
+
+	for ($obj in $gMeshesWithColorsOn)
+	{
+		setAttr ($obj+".displayColors") 1;
+	}
+
+    DeepPlayblastHandleGpuMeshRenderLayer($gGpuMeshes, 0);
+    DeepPlayblastPopNamespaceMaterials();
+}
+
+// ------------------------------------------------------------------------- //
+// Software Rendering.
+// ------------------------------------------------------------------------- //
+proc string PlayblastTool.executeRender(string $camera, float $frame_num,
+		string $output_path)
+{
+	/*
+		Render a single frame using the current renderer.
+
+		@param camera: The camera to render through.
+		@type camera: string
+		@param frame_num: The frame to render.
+		@type frame_num: float
+		@param output_path: The path to the image file including the basename.
+		@type output_path: string
+
+		@returns: The path to the rendered image.
+		@rtype: string
+
+	*/
+	string $result = "";
+
+	// Set the frame range.
+	setAttr "defaultRenderGlobals.startFrame" $frame_num;
+	setAttr "defaultRenderGlobals.endFrame" $frame_num;
+
+	// Make sure the camera is renderable.
+	setAttr ($camera + ".renderable") on;
+
+	// Render the image.
+	string $filename = render($camera);
+
+	// Rebuild the image path using the desired output_path.
+	string $basename = basename($filename, "");
+	string $comps[] = stringToStringArray($basename, ".");
+	$comps[0] = $output_path;
+	string $final_path = stringArrayToString($comps, ".");
+
+	// Move the image.
+	int $success = `sysFile -move $final_path $filename`;
+	if (!$success)
+	{
+		warning("Could not move:\n\t" + $filename + "\n\t" + $final_path);
+	}
+	else
+	{
+		PlayblastToolMessage("Rendered " + $final_path + "\n");
+	}
+
+	$result = $final_path;
+
+	return $result;
+}
+proc string[] PlayblastTool.executeRenderRangeBy(string $camera,
+		float $start_frame, float $end_frame, float $by_frame,
+		string $output_path)
+{
+	/*
+		Render a frame range by the given increment using the current renderer.
+
+		@param camera: The camera to render through.
+		@type camera: string
+		@param start_frame: The first frame to render.
+		@type start_frame: float
+		@param end_frame: The last frame to render.
+		@type end_frame: float
+		@param by_frame: The increment between frames to render.
+		@type by_frame: float
+		@param output_path: The path to the image file including the basename.
+		@type output_path: string
+
+		@returns: The paths to the rendered images.
+		@rtype: string[]
+
+	*/
+	string $result[] = {};
+
+	float $frame;
+	for ($frame = $start_frame; $frame <= $end_frame; $frame += $by_frame)
+	{
+		$result[size($result)] = PlayblastTool.executeRender($camera, $frame,
+				$output_path);
+	}
+
+	return $result;
+}
+proc string[] PlayblastTool.executeRenderRange(string $camera,
+		float $start_frame, float $end_frame, string $output_path)
+{
+	/*
+		Render a frame range using the current renderer.
+
+		@param camera: The camera to render through.
+		@type camera: string
+		@param start_frame: The first frame to render.
+		@type start_frame: float
+		@param end_frame: The last frame to render.
+		@type end_frame: float
+		@param output_path: The path to the image file including the basename.
+		@type output_path: string
+
+		@returns: The paths to the rendered images.
+		@rtype: string[]
+
+	*/
+	string $result[] = PlayblastTool.executeRenderRangeBy($camera,
+			$start_frame, $end_frame, 1.0, $output_path);
+
+	return $result;
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolPlayblastAFrame - ?
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolPlayblastAFrame(int $frameNum)
+{
+	global int $gFrameRangeStart;		// Start frame to playblast
+	global int $gFrameRangeEnd;		// End frame (inclusive) to playblast
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+	global int $gResWidth;			// x resolution to playblast at
+	global int $gResHeight;			// y resolution to playblast at
+	global string $gLocal;
+	global string $gOutputFmt;
+
+	global string $gRFXPlayblastModelPanel;
+	//global int $gIsStereo;			// If 1 then playblast through the stereo camera
+	global int $gDoStereoPlayblast;
+	global int $gDoDeepPlayblast;
+	global string $gNamespaceRenderLayer;
+	global int $gDoReload;
+	global int $gDoHires;
+	global int $gSoftwareRender;
+	global string $gCameraShape;
+	global string $gPlayblastStereoCameraLeft;
+	global string $gPlayblastStereoCameraRight;
+
+	string $playblastCmd = "playblast";
+	$playblastCmd += " -cc true";
+	$playblastCmd += " -v false";
+	$playblastCmd += " -orn false";
+	$playblastCmd += " -wh " + $gResWidth + " " + $gResHeight;
+	$playblastCmd += " -p 100";
+	$playblastCmd += " -fmt \"image\"";
+	$playblastCmd += " -c " + $gOutputFmt;
+	$playblastCmd += " -st " + $frameNum;
+	$playblastCmd += " -et " + $frameNum;
+
+	// For local playblasts only, add the "offscreen" flag
+	/* if ($gLocal != "") */
+	$playblastCmd += " -os ";
+
+	print(string($frameNum) + "\n");
+
+	if($gDoStereoPlayblast)
+	{
+		if ($gSoftwareRender)
+		{
+			PlayblastTool.executeRender($gPlayblastStereoCameraLeft, $frameNum, $gTargetImagePath + "_l");
+			PlayblastTool.executeRender($gPlayblastStereoCameraRight, $frameNum, $gTargetImagePath + "_r");
+
+			if ($gDoDeepPlayblast)
+			{
+				pushRenderLayer($gNamespaceRenderLayer);
+				PlayblastTool.executeRender($gPlayblastStereoCameraLeft, $frameNum, $gTargetImagePath + "_ns");
+				popRenderLayer();
+			}
+		}
+		else
+		{
+			lookThroughModelPanel $gPlayblastStereoCameraLeft $gRFXPlayblastModelPanel;
+			string $left_cmd = $playblastCmd + " -filename \"" + $gTargetImagePath + "_l\"";
+			PlayblastToolMessage($left_cmd);
+			eval($left_cmd);
+
+			if ($gDoDeepPlayblast)
+			{
+				pushRenderLayer($gNamespaceRenderLayer);
+				string $ns_cmd = $playblastCmd + " -filename \"" + $gTargetImagePath + "_ns\"";
+				PlayblastToolMessage($ns_cmd);
+				eval($ns_cmd);
+				popRenderLayer();
+			}
+
+			lookThroughModelPanel $gPlayblastStereoCameraRight $gRFXPlayblastModelPanel;
+			string $right_cmd = $playblastCmd + " -filename \"" + $gTargetImagePath + "_r\"";
+			PlayblastToolMessage($right_cmd);
+			eval($right_cmd);
+		}
+	}
+	else
+	{
+		if ($gSoftwareRender)
+		{
+			PlayblastTool.executeRender($gCameraShape, $frameNum, $gTargetImagePath);
+
+			if ($gDoDeepPlayblast)
+			{
+				pushRenderLayer($gNamespaceRenderLayer);
+				PlayblastTool.executeRender($gCameraShape, $frameNum, $gTargetImagePath + "_ns");
+				popRenderLayer();
+			}
+		}
+		else
+		{
+			if ($gDoDeepPlayblast)
+			{
+				pushRenderLayer($gNamespaceRenderLayer);
+				string $ns_cmd = $playblastCmd + " -filename \"" + $gTargetImagePath + "_ns\"";
+				PlayblastToolMessage($ns_cmd);
+				eval($ns_cmd);
+				popRenderLayer();
+			}
+
+			$playblastCmd += " -filename \"" + $gTargetImagePath + "\"";
+			PlayblastToolMessage($playblastCmd);
+			eval($playblastCmd);
+		}
+	}
+
+	// go to the next frame and call again
+	int $nextFrame = $frameNum + 1;
+
+	if($nextFrame > $gFrameRangeEnd)
+	{
+		// done with playblast - call the rest of the process
+		PlayblastToolPostPlayblast();
+	}
+	else
+	{
+		currentTime($nextFrame);
+		evalDeferred -lp ("PlayblastToolPlayblastAFrame(" + string($nextFrame) + ");");
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolPlayblastAll - ?
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolPlayblastAll()
+{
+	global int $gFrameRangeStart;		// Start frame to playblast
+	global int $gFrameRangeEnd;		// End frame (inclusive) to playblast
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+	global int $gResWidth;			// x resolution to playblast at
+	global int $gResHeight;			// y resolution to playblast at
+
+	global string $gRFXPlayblastModelPanel;
+	//global int $gIsStereo;			// If 1 then playblast through the stereo camera
+	global int $gDoStereoPlayblast;
+	global int $gDoDeepPlayblast;
+	global string $gNamespaceRenderLayer;
+	global int $gSoftwareRender;
+	global string $gCameraShape;
+	global string $gPlayblastStereoCameraLeft;
+	global string $gPlayblastStereoCameraRight;
+	global string $gLocal;
+	global string $gOutputFmt;
+
+	string $playblastCmd = "playblast";
+	$playblastCmd += " -cc true";
+	$playblastCmd += " -v false";
+	$playblastCmd += " -orn false";
+	$playblastCmd += " -wh " + $gResWidth + " " + $gResHeight;
+	$playblastCmd += " -p 100";
+	$playblastCmd += " -fmt \"image\"";
+	$playblastCmd += " -c " + $gOutputFmt;
+	$playblastCmd += " -st " + $gFrameRangeStart;
+	$playblastCmd += " -et " + $gFrameRangeEnd;
+
+	// For local playblasts only, add the "offscreen" flag
+	if ($gLocal != "")
+		$playblastCmd += " -os ";
+
+	if($gDoStereoPlayblast)
+	{
+		if ($gSoftwareRender)
+		{
+			PlayblastTool.doPreroll();
+			PlayblastTool.executeRenderRange($gPlayblastStereoCameraLeft, $gFrameRangeStart, $gFrameRangeEnd, $gTargetImagePath + "_l");
+			PlayblastTool.doPreroll();
+			PlayblastTool.executeRenderRange($gPlayblastStereoCameraRight, $gFrameRangeStart, $gFrameRangeEnd, $gTargetImagePath + "_r");
+
+			if ($gDoDeepPlayblast)
+			{
+				pushRenderLayer($gNamespaceRenderLayer);
+				PlayblastTool.doPreroll();
+				PlayblastTool.executeRenderRange($gPlayblastStereoCameraLeft, $gFrameRangeStart, $gFrameRangeEnd, $gTargetImagePath + "_ns");
+				popRenderLayer();
+			}
+		}
+		else
+		{
+			PlayblastTool.doPreroll();
+			lookThroughModelPanel $gPlayblastStereoCameraLeft $gRFXPlayblastModelPanel;
+			string $left_cmd = $playblastCmd + " -filename \"" + $gTargetImagePath + "_l\"";
+			PlayblastToolMessage($left_cmd);
+			eval($left_cmd);
+
+			if ($gDoDeepPlayblast)
+			{
+				pushRenderLayer($gNamespaceRenderLayer);
+				PlayblastTool.doPreroll();
+				string $ns_cmd = $playblastCmd + " -filename \"" + $gTargetImagePath + "_ns\"";
+				PlayblastToolMessage($ns_cmd);
+				eval($ns_cmd);
+				popRenderLayer();
+			}
+
+			PlayblastTool.doPreroll();
+			lookThroughModelPanel $gPlayblastStereoCameraRight $gRFXPlayblastModelPanel;
+			string $right_cmd = $playblastCmd + " -filename \"" + $gTargetImagePath + "_r\"";
+			PlayblastToolMessage($right_cmd);
+			eval($right_cmd);
+		}
+	}
+	else
+	{
+		if ($gSoftwareRender)
+		{
+			PlayblastTool.doPreroll();
+			PlayblastTool.executeRenderRange($gCameraShape, $gFrameRangeStart, $gFrameRangeEnd, $gTargetImagePath);
+
+			if ($gDoDeepPlayblast)
+			{
+				pushRenderLayer($gNamespaceRenderLayer);
+				PlayblastTool.doPreroll();
+				PlayblastTool.executeRenderRange($gCameraShape, $gFrameRangeStart, $gFrameRangeEnd, $gTargetImagePath + "_ns");
+				popRenderLayer();
+			}
+		}
+		else
+		{
+			if ($gDoDeepPlayblast)
+			{
+				pushRenderLayer($gNamespaceRenderLayer);
+				PlayblastTool.doPreroll();
+				string $ns_cmd = $playblastCmd + " -filename \"" + $gTargetImagePath + "_ns\"";
+				PlayblastToolMessage($ns_cmd);
+				eval($ns_cmd);
+				popRenderLayer();
+			}
+
+			PlayblastTool.doPreroll();
+			$playblastCmd += " -filename \"" + $gTargetImagePath + "\"";
+			PlayblastToolMessage($playblastCmd);
+			eval($playblastCmd);
+		}
+	}
+
+	// done with playblast - call the rest of the process
+	PlayblastToolPostPlayblast();
+
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolPrePlayblast - create output directory if none exists, then call the single frame playblast proc for the first time
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastTool.doPreroll()
+{
+	/*
+		Execute the preroll to wake everything up and get any simulations in order.
+
+	*/
+	global int $gFramePreRollStart; // The frame on which the preroll should start.
+	global int $gFrameRangeStart; // Start frame to playblast
+
+	// If we have a preroll, step through the frames.
+	if ($gFramePreRollStart <= $gFrameRangeStart)
+	{
+		// Step through the frames.
+		for ($i = $gFramePreRollStart; $i <= $gFrameRangeStart; $i += 1)
+		{
+			// Set the time.
+			PlayblastToolMessage("Preroll: Setting current time: " + string($i) + ".");
+			// currentTime($i);
+			currentTime -update false $i;
+		}
+	}
+
+	return;
+}
+global proc PlayblastToolPrePlayblast()
+{
+	global int $gFrameRangeStart;			// Start frame to playblast
+	global int $gFrameRangeEnd;				// End frame (inclusive) to playblast
+	global string $gTargetImagePath;		// Where to write images. Path, plus base name
+	global string $gTargetImageArchivePath;	// Where to archive images. Path, plus base name plus archive plus timestamp
+	global int $gResWidth;					// x resolution to playblast at
+	global int $gResHeight;					// y resolution to playblast at
+	global int $gPlayblastStartTime;		// store the playblast start timestamp
+	global int $gDoReload;					// store the playblast start timestamp
+	global int $gFramePreRollStart; // The frame on which the preroll should start.
+
+
+	// make sure we have a directory
+	int $checkMakeDir = 0;
+	string $outputDir = dirname ($gTargetImagePath);
+	$checkMakeDir = PlayblastToolCheckMakeDir($outputDir);
+	PlayblastToolMessage("Finished PlayblastToolCheckMakeDir");
+
+	// make sure the background is solid gray and not gradient (2011/2012 fix)
+	if (`getApplicationVersionAsFloat` == 2011 || `getApplicationVersionAsFloat` == 2012)
+	{
+		// need to swap from gradient to black, dark gray, then light gray
+		PlayblastToolMessage("Before bg cycle");
+		CycleBackgroundColor;
+		CycleBackgroundColor;
+		CycleBackgroundColor;
+		PlayblastToolMessage("After bg cycle");
+	}
+
+	// // do a one frame pre-roll to help get everything woken up
+	// if ($gExtraFramesAtHead == 0)
+	// {
+	// 	currentTime ($gFrameRangeStart-1);
+	// 	currentTime ($gFrameRangeStart);
+	// }
+	// else
+	// {
+	// 	for ($i = $gExtraFramesAtHead; $i >= 0; $i--)
+	// 	{
+	// 	currentTime ($gFrameRangeStart - $i);
+	// 	}
+	// }
+
+	// 11/08/07 - grab the start time from the filesystem instead
+	PlayblastToolMessage("Before time check");
+	string $temp_file = $outputDir + "/" + getpid();
+	PlayblastToolMessage("temp_file is " + $temp_file);
+	// Test: implement "touch" operation via Python
+	// Code pulled from rfxFileUtils module
+	python("filename = '" + $temp_file + "'");
+	python("import os;fd = os.open(filename, os.O_WRONLY | os.O_CREAT, 0666);os.close(fd);os.utime(filename, None)");
+// 	system("touch " + $temp_file);
+/*    python("f = open('/proc/meminfo')");
+	python("for line in f: print line.strip()");
+	python("f.close()");*/
+	PlayblastToolMessage("Touched temp_file");
+	$gPlayblastStartTime = getFileMTime ($temp_file);
+	PlayblastToolMessage("gPlayblastStartTime is " + $gPlayblastStartTime);
+	python("os.remove(filename)");
+// 	system("rm " + $temp_file);
+	PlayblastToolMessage("After time check");
+
+	// Replaced timestamped archive with versioned archive.  This means we create the versioned archive immediately after rendering the frames.
+	// Since we are no longer moving all the pre-existing frames to the archive, we now need to delete them all.  We do not allow multiple copies
+	// of the same version to coexist, e.g. if version v05 is re-rendered, we delete the last version archive and replace it.
+
+	// call the per-frame playblast proc for the first time
+	PlayblastToolMessage("Doing Playblast...");
+	if($gDoReload)
+	{
+		// Execute the preroll.
+		// Note: In this mode, the timeline will only advance once.
+		PlayblastTool.doPreroll();
+
+		if(catch(`evalDeferred -lp ("PlayblastToolPlayblastAFrame " + $gFrameRangeStart)`))
+		{
+			PlayblastToolQuitError("Errors occured while playblasting (PlayblastToolPlayblastAFrame).");
+		}
+	}
+	else
+	{
+		// Note: In this mode, we will run through the timeline for each eye.
+		//       Preroll should be execute before each run.
+		if(catch(`evalDeferred -lp ("PlayblastToolPlayblastAll")`))
+		{
+			PlayblastToolQuitError("Errors occured while playblasting (PlayblastToolPlayblastAll).");
+		}
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolSetAssetRenderRes - if rigs have a res attribute, set it to render
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSetAssetRenderRes()
+{
+	global int $gSwitchAssetsToRender;
+
+	if(!$gSwitchAssetsToRender)
+		return;
+
+	string $masterNodes[] = findAssetsByType("cpsvdCPD", 0);
+	for($i = 0; $i < size($masterNodes); $i += 1)
+	{
+		string $plug = $masterNodes[$i] + ".res";
+		if(!objExists($plug))
+			continue;
+
+		if(`getAttr -type $plug` != "enum")
+			continue;
+
+		if(!size(`listAttr -ud $plug`))
+			continue;
+
+		// can't make assumptions about what kind of rig it is without it being a reference
+		if(!`referenceQuery -inr $masterNodes[$i]`)
+			continue;
+
+		// only switch to render res for ani rigs
+		// this is no longer needed - there is control by task in Outsight in the project setup
+		//string $file = `referenceQuery -f $masterNodes[$i]`;
+		//if(!gmatch ($file, "*_" + getPath ("AniRigSuffix", {}) + ".m?"))
+		//	continue;
+
+		string $enumNames = `addAttr -q -en $plug`;
+		string $enums[] = stringToStringArray($enumNames, ":");
+
+		int $renderVal = -1;
+		int $highVal = -1;
+
+		for($j = 0; $j < size($enums); $j += 1)
+		{
+			if(tolower($enums[$j]) == "high")
+				$highVal = $j;
+			else if(tolower($enums[$j]) == "render")
+				$renderVal = $j;
+		}
+
+		int $val = ($renderVal != -1) ? $renderVal : $highVal;
+		if($val != -1)
+		{
+			string $in[] = `listConnections -s 1 -d 0 -p 1 $plug`;
+			if(size($in))
+				catch(`disconnectAttr $in[0] $plug`);
+			catch(`setAttr $plug $val`);
+		}
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+//
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSetUniversalEyeOn()
+{
+	global int $gSwitchAssetsToRender;
+
+	if(!$gSwitchAssetsToRender)
+		return;
+
+	string $masterNodes[] = findAssetsByType("cpsvdCPD", 0);
+	for($i = 0; $i < size($masterNodes); $i += 1)
+	{
+		// switch universal eye attribtue on
+		string $eyePlug = $masterNodes[$i] + ".enableUniversalEye";
+		if(!objExists($eyePlug))
+			continue;
+
+		if(!size(`listAttr -ud $eyePlug`))
+			continue;
+
+		if(!`referenceQuery -inr $masterNodes[$i]`)
+			continue;
+
+		string $con[] = `listConnections -s 1 -d 0 -p 1 $eyePlug`;
+
+		if(size($con))
+			catch(`disconnectAttr $con[0] $eyePlug`);
+		if(objExists($eyePlug))
+			catch(`setAttr $eyePlug 1`);
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// getOverrideSmooth - get the override smooth from a smooth node. If the smooth node is connected to multiple meshes
+// get the greater smooth setting. If no override, return -1
+// ---------------------------------------------------------------------------------------------------
+proc int getOverrideSmooth (string $smoothNode)
+{
+	string $future[] = `listHistory -f 1 $smoothNode`;
+	string $meshes[] = `ls -type mesh -ni $future`;
+	string $xforms[] = `listRelatives -p -pa $meshes`;
+	int $level = -1;
+
+	for($i = 0; $i < size($xforms); $i += 1)
+	{
+		if(!`objExists ($xforms[$i] + ".useOverride")`)
+			continue;
+		if(!`getAttr ($xforms[$i] + ".useOverride")`)
+			continue;
+		if(!`objExists ($xforms[$i] + ".overrideSmooth")`)
+			continue;
+		int $val = `getAttr ($xforms[$i] + ".overrideSmooth")`;
+		if($val > $level)
+			$level = $val;
+
+	}
+	return $level;
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolSetSmoothing - set all polySmoothFace's in the scene
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSetSmoothing()
+{
+	global int $gSetSmoothing;		// Smooth all the assets - if they have built in smoothing?
+	global int $gSmoothDivisions;		// How many divisions to smooth to.
+
+	if(!$gSetSmoothing)
+	{
+		PlayblastToolMessage("Smoothing disabled.");
+		return;
+	}
+
+	string $nodes[] = `ls -type polySmoothFace`;
+
+	for($i = 0; $i < size($nodes); $i += 1)
+	{
+		int $overrideSmooth = getOverrideSmooth ($nodes[$i]);
+		int $smooth = ($overrideSmooth != -1) ? $overrideSmooth : $gSmoothDivisions;
+		string $plug = ($nodes[$i] + ".divisions");
+		catch(`setAttr -l false $plug`);
+		string $inputPlug[] = `listConnections -s 1 -d 0 -p 1 $plug`;
+		if(size($inputPlug))
+			catch(`disconnectAttr $inputPlug[0] $plug`);
+		catch(`setAttr $plug $smooth`);
+	}
+
+	// also set at the master node level - this will take care of the new approach which uses maya's subdiv display rather than smooth nodes.
+	string $masterNodes[] = findAssetsByType ("cpsvCPD",0);
+	for ($node in $masterNodes)
+	{
+		if (`objExists ($node+".globalSmooth")`)
+			setAttr ($node+".globalSmooth") $gSmoothDivisions;
+	}
+
+	// and also nurbs objects
+	string $nurbs[] = `ls -type "nurbsSurface" -ni`;
+	for ($node in $nurbs)
+	{
+		displaySmoothness -divisionsU 3 -divisionsV 3 -pointsWire 16 -pointsShaded 4 -polygonObject 3 $node;
+	}
+
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolSetUniversalEyeTextures - Hide all locators in the scene
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSetUniversalEyeTextures ()
+{
+	global string $gShadingMode;
+
+	if($gShadingMode != "textured")
+		return;
+
+	string $masterNodes[] = findAssetsByType ("cpsvCPD",0);
+	for ($node in $masterNodes)
+	{
+		if (`objExists ($node+".eyeResolution")`)
+			evalEcho ("setAttr "+$node+".eyeResolution 512");
+
+		if (`objExists ($node+".forceTextureBake")`)
+			evalEcho ("setAttr "+$node+".forceTextureBake 1");
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolHideLocators - Hide all locators in the scene
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolHideLocators()
+{
+	string $locators[] = `ls -dag -type locator -type snapshotShape -type camera -type lookAt`;
+
+	// hide any pixel_separation_info locators manually, only if plugin is loaded.
+	if(`objectType -tagFromType "pixel_separation_info"` != 0)
+	{
+		string $pixelSeps[] = `ls -type "pixel_separation_info"`;
+		string $pS = "";
+		for($pS in $pixelSeps)
+		{
+			setAttr ($pS + ".visibility") 0;
+		}
+	}
+
+	for($node in $locators)
+	{
+		//print($node + "\n");
+		// first find out if it's hidden
+		if(!isVisible ($node))
+			continue;	// already hidden
+
+		string $vis = $node + ".v";
+		string $ove = $node + ".ove";
+		string $disp = $node + ".overrideVisibility";
+		string $lod_vis = $node + ".lodVisibility";
+
+		if(`getAttr $vis` == 0)
+			continue;	// already hidden
+
+		if(`objExists $ove` && `getAttr $ove` == 1 && `getAttr $disp` == 0)
+			continue;	// already hidden
+
+		if(`objExists $lod_vis` == 0)
+			continue;	// already hidden
+
+		// if it's a camera, check to see if it has an imageplane. If so, don't hide it
+		if(size(`ls -type camera $node`))
+		{
+			if(size(`listConnections -s 1 -d 0 ($node + ".imagePlane")`))
+			{
+				// set the locator scale to 0. This "hides" the camera while leaving the imagePlane
+				catch(`setAttr ($node + ".locatorScale") 0.0001`);
+				// Continue, otherwise the camera will get hidden.
+				continue;
+			}
+
+		}
+
+        // if it's an alembic mesh gpu cache, don't hide it
+		if(`objectType $node` == "rfxAlembicMeshGpuCache")
+        {
+            continue;
+        }
+
+		// find the first unlocked visibility plug. If the node is not referenced we can do what we like
+		if(!`referenceQuery -inr $node`)
+		{
+			if(`getAttr -l $vis`)
+				catch(`setAttr -l 0 $vis`);
+			string $inputPlug[] = `listConnections -s 1 -d 0 -p 1 $vis`;
+			if(size($inputPlug))
+				catch(`disconnectAttr $inputPlug[0] $vis`);
+			catch(`setAttr $vis 0`);
+		}
+		else
+		{
+			// find the first unlocked attribute available
+			if(!`getAttr -l $vis`)
+			{
+				string $inputPlug[] = `listConnections -s 1 -d 0 -p 1 $vis`;
+				if(size($inputPlug))
+					catch(`disconnectAttr $inputPlug[0] $vis`);
+
+				catch(`setAttr $vis 0`);
+				continue;
+			}
+			if(`objExists $ove` && !`getAttr -l $ove` && `objExists $disp` && !`getAttr -l $disp`)
+			{
+				string $inputPlug[] = `listConnections -s 1 -d 0 -p 1 $ove`;
+				if(size($inputPlug))
+					catch(`disconnectAttr $inputPlug[0] $ove`);
+
+				catch(`setAttr $ove 0`);
+
+				$inputPlug = `listConnections -s 1 -d 0 -p 1 $disp`;
+				if(size($inputPlug))
+					catch(`disconnectAttr $inputPlug[0] $disp`);
+
+				catch(`setAttr $disp 0`);
+				continue;
+			}
+			if(`objExists $lod_vis` && !`getAttr -l $lod_vis`)
+			{
+				string $inputPlug[] = `listConnections -s 1 -d 0 -p 1 $lod_vis`;
+				if(size($inputPlug))
+					catch(`disconnectAttr $inputPlug[0] $lod_vis`);
+
+				catch(`setAttr $lod_vis 0`);
+			}
+		}
+
+
+	}
+
+
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolSetCameraNearClip - ?
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSetCameraNearClip()
+{
+	global string $gCameraShape;
+
+	string $plug = ($gCameraShape + ".nearClipPlane");
+	float $nearClip = `getAttr $plug`;
+	if($nearClip < 0.01)
+	{
+		catch(`lockNode -l 0 $gCameraShape`);
+		catch(`setAttr -lock false $plug`);
+		string $inputs[] = `listConnections -s 1 -d 0 -p 1 $plug`;
+		if(size($inputs))
+			catch(`disconnectAttr $inputs[0] $plug`);
+		catch(`setAttr $plug 0.01`);
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolSetupOverlay - set up the overlay
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolSetupOverlay()
+{
+	global int $gDoOverlay;
+	global string $gOverlayTemplate;
+	global string $gCamera;
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+
+	string $imageDir = dirname($gTargetImagePath);
+	string $overlayExp = $imageDir + "/overlay.xml";
+
+	if(!$gDoOverlay)
+	{
+		PlayblastToolMessage("Overlay disabled.");
+		if(`filetest -f $overlayExp`)
+			sysFile -del $overlayExp;
+		return;
+	}
+
+	// hide all other locators - since the overlay is a locator, we must have show locators on in the model editor
+//	PlayblastToolMessage("Setting up to hide locators...");
+	PlayblastToolHideLocators();
+//	print("Done setting up hide locators.\n");
+
+	// Make sure the near clip plane is not below 0.01 - this is a temporary measure until we have the rfxOverlay node locked down - currently clipping planes below 0.01
+	// cause the text to jitter
+	// 10/02/06 - no longer needed.
+	//PlayblastToolSetCameraNearClip();
+
+
+//	PlayblastToolMessage("Creating overlay from template.....");
+	createRfxOverlayFromTemplate($gOverlayTemplate, $gCamera, "");
+//	print("Done creating overlay from template.\n");
+
+	// dump overlay to image directory - the presense of this indicates to movie robot that no overlay is required
+//	print("last bit...\n");
+	if(!`filetest -d $imageDir`)
+		sysFile -md $imageDir;
+
+	writeFile($overlayExp, $gOverlayTemplate);
+//	print("DONE last bit.\n");
+
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolCreateLockFile - Create lock file. This shows the wrapper process that we are in progress. If it is still there when maya quits, it means we failed.
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCreateLockFile()
+{
+	global string $gLockFile;
+
+	if($gLockFile == "")
+	{
+		PlayblastToolMessage("Warning: No lock file specified. Not creating one.");
+		return;
+	}
+
+	int $f = fopen($gLockFile, "w");
+	fprint($f, "\n");
+	fclose($f);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolMaximizeMainWindow
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolMaximizeMainWindow()
+{
+	global string $gMainWindow;
+	global int $gOriginalSize[];
+	global int $gOriginalPosition[];
+	global int $gStatusLineBool;
+	global int $gShelfBool;
+	global int $gRangeSliderBool;
+	global int $gCommandLineBool;
+	global int $gHelpLineBool;
+	global string $gLocal;
+
+	if (`about -batch`)
+	{
+		return;
+	}
+
+	int $xWidth;
+	int $xHeight;
+	int $modWidth;
+	int $modHeight;
+	int $thick = 27;  //width of thick KDE 3.5 window decorations
+	int $thin = 4;	//width of thin KDE 3.5 window decorations
+
+	// Maximize Main
+	$gOriginalSize = `window -q -wh $gMainWindow`;
+	$gOriginalPosition = `window -q -tlc $gMainWindow`;
+	$xWidth = int(system("/usr/bin/xdpyinfo | grep -i dimension | awk '{print $2}' | awk -Fx '{print $1}'"));
+	$xHeight = int(system("/usr/bin/xdpyinfo | grep -i dimension | awk '{print $2}' | awk -Fx '{print $2}'"));
+	$modWidth = $xWidth - ($thin + $thin);
+	$modHeight = $xHeight - ($thick + $thin);
+	PlayblastToolMessage("modWidth is " + $modWidth);
+	PlayblastToolMessage("modHeight is " + $modHeight);
+	if ($gLocal != "") {
+		// KDE 4 forces windows to scale within a single monitor space,
+		// so we have to cheat a bit to get the dimensions that we want.
+		// First reduce the width in case the window is maximized from the last run
+		window -e -w ($gOriginalSize[0] - 20) $gMainWindow;
+		// Next move the window so that it crosses both monitors
+		window -e -leftEdge ($xWidth / 2 - (`window -q -w $gMainWindow` / 2)) $gMainWindow;
+		// Now force a really large width before setting the values we want
+		window -e -width 3000 $gMainWindow;
+	}
+	window -e -tlc $thick $thin $gMainWindow;
+	window -e -wh $modWidth $modHeight $gMainWindow;
+
+	// Gather the state of UI components
+	$gStatusLineBool = `isUIComponentVisible "Status Line"`;
+	$gShelfBool = `isUIComponentVisible "Shelf"`;
+	$gRangeSliderBool = `isUIComponentVisible "Range Slider"`;
+	$gCommandLineBool = `isUIComponentVisible "Command Line"`;
+	$gHelpLineBool = `isUIComponentVisible "Help Line"`;
+
+	// Close open UI components
+	if ($gStatusLineBool)
+		toggleUIComponentVisibility "Status Line";
+	if ($gShelfBool)
+		toggleUIComponentVisibility "Shelf";
+	if ($gRangeSliderBool)
+		toggleUIComponentVisibility "Range Slider";
+	if ($gHelpLineBool)
+		toggleUIComponentVisibility "Help Line";
+	// Do a bit more for local playblasts to maximize screen real-estate
+	if ($gLocal != "")
+	{
+		if (`isUIComponentVisible "Time Slider"`)
+			toggleUIComponentVisibility "Time Slider";
+		if ($gCommandLineBool)
+			toggleUIComponentVisibility "Command Line";
+		toggleMenuBarsInPanels false;
+		ToggleModelEditorBars;
+//		   toggleModelEditorBarsInAllPanels 0;
+		window -e -mbv false $gMainWindow;
+	}
+	else
+	{
+	    setAllMainWindowComponentsVisible 0;
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolRestoreMainWindow
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolRestoreMainWindow()
+{
+	global string $gMainWindow;
+	global int $gOriginalSize[];
+	global int $gOriginalPosition[];
+	global int $gStatusLineBool;
+	global int $gShelfBool;
+	global int $gRangeSliderBool;
+	global int $gCommandLineBool;
+	global int $gHelpLineBool;
+
+	// Restore Main
+	window -e -wh $gOriginalSize[0] $gOriginalSize[1] $gMainWindow;
+	window -e -tlc $gOriginalPosition[0] $gOriginalPosition[1] $gMainWindow;
+
+	// Open UI components closed by the script
+	if ($gStatusLineBool)
+		toggleUIComponentVisibility "Status Line";
+	if ($gShelfBool)
+		toggleUIComponentVisibility "Shelf";
+	if ($gRangeSliderBool)
+		toggleUIComponentVisibility "Range Slider";
+	//if ($gCommandLineBool)
+	//	toggleUIComponentVisibility "Command Line";
+	if ($gHelpLineBool)
+		toggleUIComponentVisibility "Help Line";
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolCreateMovieWithMencoder - Create a movie using mencoder
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCreateMovieWithMencoder()
+{
+	global int $gFrameRangeStart;		// Start frame to playblast
+	global int $gFrameRangeEnd;		// End frame (inclusive) to playblast
+	global int $gResWidth;			// x resolution to playblast at
+	global int $gResHeight;			// y resolution to playblast at
+	global string $gOutputFmt;		// Output format for frames.
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+	global string $gTargetMoviePath;	// Where to write movies, if desired
+	global string	$gEncoderVideoOptions;	// option string to send to mencoder for creating movies
+	global string $gEncoderAudioOptions;	// option string to send to mencoder for audio options
+	global string $gMovieFPS;		// fps for movie as a string , e.g. "film"
+	global string $gAudioPath;		// Path to audio for the shot
+	global int $gDoAudio;			// If we are making a movie, include audio?
+	global string $gInputScene;		// The scene to playblast
+
+	string $project = getPath("ProjectFromFilename", {$gInputScene});
+	string $imageDir = dirname ($gTargetImagePath);
+	string $imageName = basename ($gTargetImagePath, "");
+	string $movieDir = dirname ($gTargetMoviePath);
+
+	PlayblastToolMessage("Building movie with mencoder, the FLV version will not be made.");
+
+	// convert fps from a string (e.g. "film") to a number
+	string $lookup[] = {
+		"film", "24",
+		"ntsc", "30",
+		"pal", "25",
+		"game", "15",
+		"ntscf", "60"
+	};
+	int $index = stringArrayFindIndex ($gMovieFPS, $lookup);
+	string $fps = $lookup[$index+1];
+	if($project == "16063_robosapien_rebooted")
+		$fps = "23.976";
+
+
+	// create a list file for mencoder
+	string $listData;
+	string $listFile = $imageDir + "/mencoder_list.txt";
+
+	for($i = $gFrameRangeStart; $i <= $gFrameRangeEnd; $i += 1)
+		$listData += $imageDir + "/" + $imageName + "." + padNumber ($i, 4) + "." + $gOutputFmt + "\n";
+
+	writeFile($listFile, $listData);
+
+	// build the mencoder command
+	string $cmd = "mencoder ";
+	$cmd += "mf://\"@" + $listFile + "\" ";
+	$cmd += "-mf w=" + $gResWidth + ":h=" + $gResHeight + ":fps=" + $fps + ":type=" + $gOutputFmt + " ";
+	$cmd += "-o " + $gTargetMoviePath + " ";
+	$cmd += $gEncoderVideoOptions + " ";
+	if($gDoAudio)
+	{
+		$cmd += $gEncoderAudioOptions + " -audiofile " + $gAudioPath;
+		//$cmd += "-oac lavc -audiofile " + $gAudioPath;
+	}
+
+	PlayblastToolMessage("mencoder call:");
+	PlayblastToolMessage($cmd);
+
+	system($cmd);
+
+/*
+// example mencoder call
+mencoder mf://"@/renders/entertainment/15374_socom/show/seq004/sg0012/animation/standard/list.txt" -mf fps=30 -o test3.avi -ovc lavc -lavcopts vcodec=mpeg4:mbd=2:trell:v4mv:last_pred=2:dia=-1:vmax_b_frames=2:vb_strategy=1:cmp=3:subcmp=3:precmp=0:vqcomp=0.6:turbo -oac lavc -audiofile /renders/entertainment/15374_socom/show/seq004/sg0012/animation/standard/5030_0030.wav
+
+*/
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolCreateMovieWithFfmpeg - Create a movie using ffmpeg
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCreateMovieWithFfmpeg()
+{
+	global int $gDoAudio;					// If we are making a movie, include audio?
+	global int $gResWidth;					// x resolution to playblast at
+	global int $gResHeight;					// y resolution to playblast at
+	global int $gMovieResWidth;		// x resolution of movie, may be different than frame size
+	global int $gMovieResHeight;		// y resolution of movie, may be different than frame size
+	global float $gMovieResAspect;		// aspect ratio of movie, may be different than for frames
+	global int $gFrameRangeStart;			// Start frame to playblast
+	global int $gFrameRangeEnd;				// End frame (inclusive) to playblast
+	global string $gTargetImagePath;		// Where to write images. Path, plus base name
+	global string $gTargetMoviePath;		// Where to write movies, if desired
+	global string $gTargetFLVMoviePath;		// Where to write movies, if desired
+	global string $gTargetFLVMoviePathTemp;	// Where to write movies, if desired
+	global string $gOutputFmt;				// Output format for frames.
+	global string $gAudioPath;				// Path to audio for the shot
+	global string $gMovieFPS;				// fps for movie
+	global string $gEncoderVideoOptions;	// option string to send to mencoder for creating movies
+	global string $gEncoderAudioOptions;	// option string to send to mencoder for audio options
+	global string $gInputScene;		// The scene to playblast
+	global int $gDoDeepPlayblast;   // deep playblast
+    global string $gDeepPlayblastMoviePath; // Where to write deep playblast movie
+
+	float $master_start_frame;
+	float $start_sec;
+	float $runtime;
+
+	// convert fps from a string (e.g. "film") to a number
+	string $lookup[] = {
+		"film", "24",
+		"ntsc", "30",
+		"pal", "25",
+		"game", "15",
+		"ntscf", "60"
+	};
+
+
+	// HACK
+	// Basic gist of subshot audio hack. We want to find out if the shot we are in is indeed a subshot.
+	// We do this by using Insight's ipydata to query if there is a parent_shot_id associated with the shot.
+	// If there is a parent_shot_id, we are in a subshot.  Now we query information from the parent shot
+	// and the subshot to find out where the shot's master audio is and how far to offset the images when
+	// making the movie.
+	int $is_subshot = 0;
+
+	python("from path_lib import path_extractor");
+	python("from path_lib import path_finder");
+	python("import ipydata");
+	python("ipydata.set_global_stage('production')");
+
+	// Using path extractor and the current file path to figure out what shot we're in.
+	python("context = path_extractor.extract('" + $gInputScene + "')");
+	string $keys[] = python("context.keys()");
+
+	// Check to see that we have enough information to complete the operation.
+	if(`stringArrayFindIndex "project" $keys` != -1 && `stringArrayFindIndex "sq" $keys` != -1 && `stringArrayFindIndex "sh" $keys` != -1)
+	{
+		python("project = ipydata.prod.Project.where(number=context['project'].split('_')[0]).first()");
+		string $project = python("project.name");
+		python("sequence = project.sequences.where(number=context['sq']).first()");
+		python("shot = sequence.shots.where(name=context['sh']).first()");
+		$is_subshot = python("shot.parent_shot_id");
+		if($is_subshot != 0)
+		{
+			python("parent_shot = project.shots.find(" + $is_subshot + ")");
+			python("parent_seq = project.sequences.find(parent_shot.sequence_id)");
+			string $sequence = python("parent_seq.number");
+			string $shot = python("parent_shot.name");
+			string $sound_path = python("path_finder.get_path(\"sh_audio_dir\", department=context['department'], project=context['project']" + ", sq='" + $sequence + "', sh='" + $shot + "')");
+			string $sound_file = ($sound_path + "/" + $sequence + "_" + $shot + ".wav");
+			int $file_exists = size(`system("ls " + $sound_file)`);
+
+			if($file_exists == 0)
+			{
+				error($sound_file + " Does not exist! Contact the Technical Director assigned to your show.");
+				return ;
+			}
+			else
+			{
+				$gAudioPath = $sound_file;
+
+				int $index = stringArrayFindIndex ($gMovieFPS, $lookup);
+				string $tmp_fps = $lookup[$index+1];
+
+				$master_start_frame = python("parent_shot.frame_range_start");
+
+				// Calculate what time the current shot starts in the master audio in seconds.
+				$start_sec = (float($gFrameRangeStart) - float($master_start_frame))/float($tmp_fps);
+
+				// Calculate how long the current shot runs in seconds.
+				$runtime = (float($gFrameRangeEnd) - float($gFrameRangeStart))/float($tmp_fps);
+			}
+		}
+	}
+
+	string $project = getPath("ProjectFromFilename", {$gInputScene});
+	string $imageDir = dirname ($gTargetImagePath);
+	string $imageName = basename ($gTargetImagePath, "");
+	string $movieDir = dirname ($gTargetMoviePath);
+	//string $tempDir = $imageDir + "/" + getpid();
+	string $tempDir = $imageDir;
+	string $cmdFile = $imageDir + "/ffmpeg_doIt.cmd";
+
+	$gTargetFLVMoviePath = `substitute "mov$" $gTargetMoviePath "flv"`;
+	$gTargetFLVMoviePathTemp = `substitute "mov$" $gTargetMoviePath "temp.flv"`;
+
+	if(`filetest -f $gTargetMoviePath`)
+		system("rm -r " + $gTargetMoviePath);
+	if(`filetest -f $gTargetFLVMoviePath`)
+		system("rm -r " + $gTargetFLVMoviePath);
+	if(`filetest -f $gTargetFLVMoviePathTemp`)
+		system("rm -r " + $gTargetFLVMoviePathTemp);
+    if($gDoDeepPlayblast && `filetest -f $gDeepPlayblastMoviePath`)
+        system("rm -r " + $gDeepPlayblastMoviePath);
+
+	// Preparation:
+	/*
+		Create a temp dir, and create symbolic links to the original image files beginning at frame 0001
+	*/
+
+//	PlayblastToolMessage("Preparing frames for ffmpeg...");
+//
+//	if(!`filetest -d $tempDir`)
+//		system("mkdir -m 777 " + $tempDir);
+//
+//	for($i = $gFrameRangeStart; $i <= $gFrameRangeEnd; $i += 1)
+//	{
+//		int $tgtFrame = $i - $gFrameRangeStart + 1;
+//
+//		string $src = $imageDir + "/" + $imageName + "." + padNumber ($i, 4) + "." + $gOutputFmt;
+//		string $tgt = $tempDir +"/" + $imageName + "." + padNumber ($tgtFrame, 4) + "." + $gOutputFmt;
+//
+//		//PlayblastToolMessage("Link source: " + $src);
+//		//PlayblastToolMessage("Link target: " + $tgt);
+//
+//		system("ln -s " + $src + " " + $tgt);
+//	}
+
+
+	// convert fps from a string (e.g. "film") to a number
+	string $lookup[] = {
+		"film", "24",
+		"ntsc", "30",
+		"pal", "25",
+		"game", "15",
+		"ntscf", "60"
+	};
+	int $index = stringArrayFindIndex ($gMovieFPS, $lookup);
+	string $fps = $lookup[$index+1];
+	if($project == "16063_robosapien_rebooted")
+		$fps = "23.976";
+
+	PlayblastToolMessage("Building encoder commands...");
+
+	//
+	// build the ffmpeg command for mov
+	//
+	string $cmd = "ffmpeg ";
+	$cmd += "-y ";
+	$cmd += "-start_frame " + $gFrameRangeStart + " ";
+	$cmd += "-end_frame " + $gFrameRangeEnd + " ";
+	$cmd += "-r " + $fps + " ";
+
+	if($is_subshot != 0)
+	{
+		// We are a subshot so we need to offset the images in time to align with the audio properly.
+		// We have to offset the images instead of the audio because of a bug in ffmpeg.
+		// Six of one half a dozen of the other.
+		$cmd += "-itsoffset " + $start_sec + " ";
+	}
+
+	$cmd += "-i " + $tempDir + "/" + $imageName + ".%04d." + $gOutputFmt + " ";
+	// add video options from instruction file
+	$cmd += $gEncoderVideoOptions + " ";
+    $cmd += "-metadata album=\"" + $gTargetMoviePath + "\" ";
+
+    if($gDoAudio)
+	{
+
+		$cmd += "-i " + $gAudioPath + " ";
+		$cmd += $gEncoderAudioOptions + " ";
+
+	}
+	//$cmd += "-vframes " + ($gFrameRangeEnd-$gFrameRangeStart+1) + " ";
+	if($gMovieResWidth != $gResWidth && $gMovieResHeight != $gResHeight)
+	{
+		$cmd += "-s " + $gMovieResWidth + "x" + $gMovieResHeight + " ";
+	}
+
+	if($is_subshot != 0)
+	{
+		// Get a temporary path to write the image to since we need to run the movie process twice.
+		// Once to create the movie with extra audio and again to cut the extra audio off.
+		// We'll do the same thing later for the flv.
+		string $tmp = `substitute ".mov$" $gTargetMoviePath ".tmp.mov"`;
+		if(`filetest -f $tmp`)
+			system("rm -r " + $tmp);
+		$cmd += $tmp;
+		$cmd += "; ";
+		$cmd += "ffmpeg -ss " + $start_sec + " -t " + $runtime + " -sameq -i " + $tmp + " ";
+		$cmd += ($gTargetMoviePath + ";\n");
+	}
+	else
+	{
+		$cmd += $gTargetMoviePath;
+		$cmd += ";\n";
+	}
+
+    //
+    // build the ffmpeg command for deep playblast mov
+    //
+    if ($gDoDeepPlayblast)
+    {
+        $cmd += "ffmpeg ";
+        $cmd += "-y ";
+        $cmd += "-start_frame " + $gFrameRangeStart + " ";
+        $cmd += "-end_frame " + $gFrameRangeEnd + " ";
+        $cmd += "-r " + $fps + " ";
+
+        if($is_subshot != 0)
+        {
+            // We are a subshot so we need to offset the images in time to align with the audio properly.
+            // We have to offset the images instead of the audio because of a bug in ffmpeg.
+            // Six of one half a dozen of the other.
+            $cmd += "-itsoffset " + $start_sec + " ";
+        }
+
+        $cmd += "-i " + $tempDir + "/" + $imageName + ".%04d." + $gOutputFmt + " ";
+        // add video options from instruction file
+        $cmd += $gEncoderVideoOptions + " ";
+
+        $cmd += "-metadata album=\"" + $gTargetMoviePath + "\" ";
+        $cmd += "-i " + $tempDir + "/" + $imageName + "_ns" + ".%04d." + $gOutputFmt + " ";
+        $cmd += $gEncoderVideoOptions + " ";
+
+        if($gDoAudio)
+        {
+
+            $cmd += "-i " + $gAudioPath + " ";
+            $cmd += $gEncoderAudioOptions + " ";
+
+        }
+        //$cmd += "-vframes " + ($gFrameRangeEnd-$gFrameRangeStart+1) + " ";
+        if($gMovieResWidth != $gResWidth && $gMovieResHeight != $gResHeight)
+        {
+            $cmd += "-s " + $gMovieResWidth + "x" + $gMovieResHeight + " ";
+        }
+
+        if($is_subshot != 0)
+        {
+            // Get a temporary path to write the image to since we need to run the movie process twice.
+            // Once to create the movie with extra audio and again to cut the extra audio off.
+            // We'll do the same thing later for the flv.
+            string $tmp = `substitute ".mov$" $gDeepPlayblastMoviePath ".tmp.mov"`;
+            if(`filetest -f $tmp`)
+                system("rm -r " + $tmp);
+            $cmd += $tmp;
+            $cmd += " -vcodec png -newvideo";
+            $cmd += "; ";
+            $cmd += "ffmpeg -ss " + $start_sec + " -t " + $runtime + " -sameq -i " + $tmp + " ";
+            $cmd += ($gDeepPlayblastMoviePath + ";\n");
+        }
+        else
+        {
+            $cmd += $gDeepPlayblastMoviePath;
+            $cmd += " -vcodec png -newvideo";
+            $cmd += ";\n";
+        }
+
+        // set track 0 to layer 0, and track 1 to layer 1 so that the quicktime player
+        // doesn't display the deep playblast track on top of the regular track
+        $cmd += "movutils ";
+        $cmd += $gDeepPlayblastMoviePath;
+        $cmd += " -edit moov.trak0.tkhd layer 0";
+        $cmd += " -edit moov.trak1.tkhd layer 1;\n";
+    }
+
+
+	//
+	// build the ffmpeg command for flv
+	//
+	$cmd += "ffmpeg ";
+	$cmd += "-start_frame " + $gFrameRangeStart + " ";
+	$cmd += "-end_frame " + $gFrameRangeEnd + " ";
+	$cmd += "-y ";
+	$cmd += "-r " + $fps + " ";
+	if($is_subshot != 0)
+	{
+		$cmd += "-itsoffset " + $start_sec + " ";
+	}
+	$cmd += "-i " + $tempDir + "/" + $imageName + ".%04d." + $gOutputFmt + " ";
+	if($gDoAudio)
+	{
+		$cmd += "-i " + $gAudioPath + " ";
+		//$cmd += $gEncoderAudioOptions + " ";
+		$cmd += "-acodec libfaac ";
+	}
+	$cmd += "-g 1 -f flv -s " + PlayblastToolMultipleOfTwo($gMovieResWidth)  + "x" + PlayblastToolMultipleOfTwo($gMovieResHeight)  + " -ar 22050 -b 10000000 -r " + $fps + " ";
+	$cmd += "-vframes " + ($gFrameRangeEnd-$gFrameRangeStart+1) + " ";
+
+	if($is_subshot != 0)
+	{
+		string $tmp = `substitute ".flv$" $gTargetFLVMoviePathTemp ".tmp.flv"`;
+		if(`filetest -f $tmp`)
+			system("rm -r " + $tmp);
+		$cmd += $tmp + "; ";
+		$cmd += "ffmpeg -ss " + $start_sec + " -t " + $runtime + " -sameq -i " + $tmp + " ";
+	}
+
+	$cmd += ($gTargetFLVMoviePathTemp + ";\n");
+
+	PlayblastToolMessage("ffmpeg commands to create mov files:");
+	PlayblastToolMessage($cmd);
+	writeFile ($cmdFile, ($cmd));
+
+	// write the file to disk and make executable
+	// This is due to some peculiarities with ffmpeg - if maya is running in the background, ffmpeg will suspend the execution of maya!
+	// This doesn't happen when you run ffmpeg from within a shell script
+	system("chmod 777 " + $cmdFile);
+
+	PlayblastToolMessage("Invoking encoder...");
+	PlayblastToolMessage($cmdFile);
+	system($cmdFile);
+
+//	// remove the temp dir with the sym links
+//	system("rm -r " + $tempDir);
+
+/*
+example ffmpeg call
+ffmpeg -y -r 24 -i /path/to/frames.jpg -b 1000k -i /path/to/sound.wav -acodec pcm_s16le -vframes 463 output.mov
+*/
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolCreateMovie - Create a movie
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCreateMovie()
+{
+	global int $gDoMovie;			// Make a movie?
+	global int $gDoAudio;			// If we are making a movie, include audio?
+	global string $gMovieFPS;		// fps for movie
+	global string	$gEncoderVideoOptions;	// option string to send to mencoder for creating movies
+	global string $gEncoderAudioOptions;	// option string to send to mencoder for audio options
+	global string $gAudioPath;		// Path to audio for the shot
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+	global string $gTargetMoviePath;	// Where to write movies, if desired
+	global int $gFrameRangeStart;		// Start frame to playblast
+	global int $gFrameRangeEnd;		// End frame (inclusive) to playblast
+	global int $gResWidth;			// x resolution to playblast at
+	global int $gResHeight;			// y resolution to playblast at
+	global float $gResAspect;		// aspect ratio
+	global string $gOutputFmt;		// Output format for frames.
+	global string $gMovieType;		// mov or avi
+	global string $gEncoder;		// encoder to use "ffmpeg" or "mencoder"
+
+	if(!$gDoMovie)
+	{
+		PlayblastToolMessage("Movie generation disabled.");
+		return;
+	}
+
+	string $imageDir = dirname ($gTargetImagePath);
+	string $imageName = basename ($gTargetImagePath, "");
+	string $movieDir = dirname ($gTargetMoviePath);
+	/*
+		$gTargetMoviePath will be something like:
+		/data/development/17199_pipeline_dir_test_new/cg/sequences/sq9000/sh0010/movies/lay/9000_0010_lay.0001.mov
+
+		so movieDir = /data/development/17199_pipeline_dir_test_new/cg/sequences/sq9000/sh0010/movies/lay
+	*/
+
+
+	// make sure we the target directory exists.
+	PlayblastToolCheckMakeDir($movieDir);
+
+	if($gEncoder == "mencoder")
+	{
+		PlayblastToolCreateMovieWithMencoder();
+	}
+	else
+	{
+		PlayblastToolCreateMovieWithFfmpeg();
+	}
+
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolCheckFrames - Check that all the frames were created
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCheckFrames()
+{
+	global int $gPlayblastStartTime;	// store the playblast start timestamp
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+	global int $gFrameRangeStart;		// Start frame to playblast
+	global int $gFrameRangeEnd;		// End frame (inclusive) to playblast
+	global string $gOutputFmt;		// Output format for frames.
+	global int $gDoStereoPlayblast;
+	global int $gIsStereo;
+	global int $gDoStereo;
+
+	string $imageDir = dirname ($gTargetImagePath);
+	string $imageName = basename ($gTargetImagePath, "");
+
+	string $src;
+	int $temp[];
+	int $stamp;
+
+	int $numMissing = 0;
+
+//	if($gDoStereoPlayblast)
+	if($gIsStereo && $gDoStereo)
+	{
+		for($i = $gFrameRangeStart; $i <= $gFrameRangeEnd; $i += 1)
+		{
+			string $file = $imageName + "_l." + padNumber($i, 4) + "." + $gOutputFmt;
+			string $link = $imageDir + "/" + $imageName + "." + padNumber($i, 4) + "." + $gOutputFmt;
+			string $cmd = "rm " + $link;
+			if(`filetest -f $link`)
+				evalEcho("system(\"" + $cmd + "\");");
+			// if(!`endsWith($file, ".png"))
+			// {
+			// 	string $new_file = substitute(".iff", $file, ".png");
+			// 	system("/usr/local/bin/imf_copy " + $file + $new_file);
+			// 	$file = $new_file;
+			// }
+			$cmd = "ln -s " + $file + " " + $link;
+			evalEcho("system(\"" + $cmd + "\");");
+		}
+	}
+
+	for($i = $gFrameRangeStart; $i <= $gFrameRangeEnd; $i += 1)
+	{
+		string $suffixes[] = {""};
+		if($gDoStereoPlayblast)
+			$suffixes = {"", "_l", "_r"};
+
+		for($suffix in $suffixes)
+		{
+			$src = $imageDir + "/" + $imageName + $suffix + "." + padNumber($i, 4) + "." + $gOutputFmt;
+			if(!`filetest -f $src`)
+			{
+				$numMissing += 1;
+				continue;
+			}
+
+			// $stamp = getFileMTime($src);
+			// if($stamp < $gPlayblastStartTime)
+			// {
+			// 	$numMissing += 1;
+			// 	continue;
+			// }
+		}
+	}
+
+
+	// Create the main frame links to the latest (current) version.
+	for($i = $gFrameRangeStart; $i <= $gFrameRangeEnd; $i += 1)
+	{
+		string $link_dir = dirname(dirname(dirname($gTargetImagePath)));
+		string $link_name = basename($gTargetImagePath, "");
+		$link_name = substitute("_[0-9][0-9][0-9][0-9]$", $link_name, "");
+		// Remove the _ani or _lay until we update the movie maker.
+		$link_name = substitute("_[al][na][iy]$", $link_name, "");
+		string $link = $link_dir + "/" + $link_name + "." + padNumber($i, 4) + "." + $gOutputFmt;
+
+		string $location = substitute(($link_dir + "/"), $gTargetImagePath, "") + "." + padNumber($i, 4) + "." + $gOutputFmt;
+
+		string $cmd = "rm " + $link;
+		if(`filetest -f $link`)
+			evalEcho("system(\"" + $cmd + "\");");
+		$cmd = "ln -s " + $location + " " + $link;
+		PlayblastToolMessage($cmd);
+		evalEcho("system(\"" + $cmd + "\");");
+
+//		string $image_base_name = $imageName + "." + padNumber($i, 4) + "." + $gOutputFmt;
+//		string $link_dir = dirname(dirname($imageDir));
+//		string $rel_dir = substitute(($link_dir + "/"), $imageDir, "");
+//
+//		string $rel_file = $rel_dir + "/" + $image_base_name;
+//		string $link = $link_dir + "/" + $image_base_name;
+//		string $cmd = "rm " + $link;
+//		system($cmd);
+//		$cmd = "ln -s " + $rel_file + " " + $link;
+//		system($cmd);
+	}
+
+	if($numMissing > 0)
+	{
+		PlayblastToolQuitError("Playblasted frames failed validation (" + $numMissing + " missing, or belonging to previous playblast).\nThe last source file was " + $src + ".\nThe start time for the playblast was " + $gPlayblastStartTime + ".\nThe stamp was " + $stamp);
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolCheckMovie - Check that the movie was created
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCheckMovie()
+{
+	global int $gDoMovie;			// Make a movie?
+	global int $gPlayblastStartTime;	// store the playblast start timestamp
+	global string $gTargetMoviePath;	// Where to write movies, if desired
+
+	if(!$gDoMovie)
+	{
+		PlayblastToolMessage("Movie generation disabled.");
+		return;
+	}
+
+	if(!`filetest -f $gTargetMoviePath`)
+	{
+		PlayblastToolQuitError("Movie file failed validation (none created).");
+	}
+	int $stamp = getFileMTime ($gTargetMoviePath);
+	if($stamp < $gPlayblastStartTime)
+	{
+		PlayblastToolQuitError("Movie file failed validation (none created - movie exists from previous playblast).");
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolCheckFLVMovie - Check that the movie was created
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCheckFLVMovie()
+{
+	global int $gDoMovie;			// Make a movie?
+	global int $gPlayblastStartTime;	// store the playblast start timestamp
+	global string $gTargetFLVMoviePath;	// Where to write FLV movies, if desired
+
+	if(!$gDoMovie)
+	{
+		PlayblastToolMessage("Movie generation disabled.");
+		return;
+	}
+
+	if(!`filetest -f $gTargetFLVMoviePath`)
+	{
+		PlayblastToolQuitError("FLV Movie file failed validation (none created).");
+	}
+	int $stamp = getFileMTime ($gTargetFLVMoviePath);
+	if($stamp < $gPlayblastStartTime)
+	{
+		PlayblastToolQuitError("FLV Movie file failed validation (none created - movie exists from previous playblast).");
+	}
+}
+// ----------------------------------------------------------------------------------------------------------------
+// PlayblastToolPropogateFrames - Make copies of the frames in the edit_supervisor folder needed for the movie robot
+// ----------------------------------------------------------------------------------------------------------------
+global proc PlayblastToolPropogateFrames()
+{
+//	global int $gPlayblastStartTime;	// store the playblast start timestamp
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+	global string $gOutputFmt;			// Output format for frames.
+
+	string $seq = getPath ("SequenceFromPlayblastDir", {$gTargetImagePath});	//
+	string $shot = getPath ("ShotFromPlayblastDir", {$gTargetImagePath});	//
+	string $type = getPath ("TypeFromPlayblastDir", {$gTargetImagePath});	// yields animation or layout in old structure, ani or lay in new
+	string $res = getPath ("ResFromPlayblastDir", {$gTargetImagePath});	// yields standard or high in old structure, "" in new (discontinued)
+
+	string $imageDir = dirname ($gTargetImagePath);
+	string $editSupervisorDir = getPath ("EditorialPlayblastLatestFramesDir", {$seq, $shot, $res});
+	if($editSupervisorDir == "")
+		$editSupervisorDir = $imageDir;
+
+	// make sure the edit_supervisor directory exists
+	if(!`filetest -d $editSupervisorDir`)
+	{
+		sysFile -md $editSupervisorDir;
+		system("chmod +w " + $editSupervisorDir);
+	}
+
+	PlayblastToolMessage("Deleting pre-existing frames from the edit_supervisor folder");
+	// use xargs when deleting large numbers of files
+	if (size(glob($editSupervisorDir + "/*.png")))
+		catch(system("ls " + $editSupervisorDir + "/*.png | xargs rm"));
+	if (size(glob($editSupervisorDir + "/*.tga")))
+		catch(system("ls " + $editSupervisorDir + "/*.tga | xargs rm"));
+
+	string $cmd;
+	string $fileList[] = `getFileList -fld ($imageDir + "/") -fs ("*." + $gOutputFmt)`;
+	for($file in $fileList)
+	{
+
+		string $sourceFile = $imageDir + "/" + $file;
+		string $destFile = $editSupervisorDir + "/" + $file;
+		PlayblastToolMessage("Propogating " + $sourceFile + " to edit_supervisor");
+		$cmd = "/bin/cp " + $sourceFile + " " + $destFile;
+		system($cmd);
+
+//		//Editors are not using the Smoke system for any current projects, tgas not required
+//		//This should be added as an option to, then read from, project.xml
+//		if($project != "15923_open_season_2")
+//		{
+//			string $destFile = substitute ($gOutputFmt, $destFile, "tga");
+//			$cmd = "/usr/bin/convert " + $sourceFile + " -depth 8 " + $destFile;
+//			system($cmd);
+//		}
+	}
+
+
+	// END NEW CODE
+
+
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolPropogateMovie - Make copies of the movie in the location needed for the movie robot to pick it up
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolPropogateMovie()
+{
+	global int $gDoMovie;				// Make a movie?
+	global int $gPlayblastStartTime;	// store the playblast start timestamp
+	global string $gTargetMoviePath;	// Where to write movies, if desired
+	global string $gTargetImagePath;	// Where to write images. Path, plus base name
+
+	if(!$gDoMovie)
+	{
+		return;
+	}
+
+	/*
+	targets for propogated movie, for example:
+		/renders/entertainment/15015_boz_hv107_production/show/seq7010/sg0230/layout/standard/playblast/7010_0230.mov
+		/renders/entertainment/15015_boz_hv107_production/show/seq7010/sg0230/layout/standard/playblast/7010_0230_lay.0001.mov
+		/renders/entertainment/15015_boz_hv107_production/show/seq7010/sg0230/edit_supervisor/standard/playblast/7010_0230.mov
+
+		New targets for propogated movie:
+		shot/movies/dept/seq_shot.mov - for editorial. Sym-link? Not for now.
+		shot/movies/latest/seq_shot.mov - for editorial
+
+
+		outMovieName
+		outMovieNameVer
+		outMovieNameES
+
+		// incoming $gTargetImagePath
+		// old:/renders/entertainment/16252_webosaurs/show/seqBATL/sg1010/animation/standard/BATL_1010
+		// new:/data/development/17199_pipeline_dir_test_new/cg/sequences/sq9000/sh0010/movies/lay/frames//9000_0010
+	*/
+
+	string $seq = getPath ("SequenceFromPlayblastDir", {$gTargetImagePath});	//
+	string $shot = getPath ("ShotFromPlayblastDir", {$gTargetImagePath});	//
+	string $type = getPath ("TypeFromPlayblastDir", {$gTargetImagePath});	// yields animation or layout in old structure, ani or lay in new
+	string $res = getPath ("ResFromPlayblastDir", {$gTargetImagePath});	// yields standard or high in old structure, "" in new (discontinued)
+
+
+	string $imageDir = getPath ("EditorialPlayblastDir", {$seq, $shot, $type, $res});
+	string $movieBaseName = basename ($gTargetMoviePath, "");
+
+	string $buf[];
+	tokenize ($movieBaseName, ".", $buf);
+	string $movieExt = $buf[size($buf)-1];
+
+	string $movieName;
+	$movieName = `substitute "_lay$" $buf[0] ""`;
+	$movieName = `substitute "_previs$" $movieName ""`;
+	$movieName = `substitute "_ani$" $movieName ""`;
+	$movieName = `substitute "_cloth$" $movieName ""`;
+
+	// construct mov target paths
+	string $outMovieName = $imageDir + "/" + $movieName + "." + $movieExt;
+	string $outMovieNameVer = $imageDir + "/" + $movieBaseName;
+	string $outMovieNameES = getPath ("EditorialPlayblastLatestDir", {$seq, $shot, $res}) + "/" + $movieName + "." + $movieExt;
+
+	// construct flv target paths
+	string $outFLVMovieName = `substitute "mov$" $outMovieName "flv"`;
+	string $outFLVMovieNameVer = `substitute "mov$" $outMovieNameVer "flv"`;
+
+	PlayblastToolMessage("The outMovieName is " + $outMovieName);
+	PlayblastToolMessage("The outMovieNameVer is " + $outMovieNameVer);
+	PlayblastToolMessage("The outMovieNameES is " + $outMovieNameES);
+	PlayblastToolMessage("The outFLVMovieName is " + $outFLVMovieName);
+	PlayblastToolMessage("The outFLVMovieNameVer is " + $outFLVMovieNameVer);
+
+	// make sure directories exist, and copy movies
+	for($file in {$outMovieName, $outMovieNameVer, $outMovieNameES})
+	{
+		string $dir = dirname ($file);
+		if(!`filetest -d $dir`)
+		{
+			sysFile -md $dir;
+		}
+		system("chmod +w " + $dir);
+
+		if($file != $gTargetMoviePath)
+		{
+			sysFile -cp $file $gTargetMoviePath;
+			system("chmod +w " + $file);
+		}
+		else
+		{
+			PlayblastToolMessage($file + " is the same as " + $gTargetMoviePath + ". Skipping copy.");
+		}
+	}
+
+	string $movies_to_check[] = {$outMovieName, $outMovieNameES};
+	int $error = false;
+	for($i = 0; $i < size($movies_to_check); $i += 1)
+	{
+		if(!`filetest -f $movies_to_check[$i]`)
+		{
+			$error = true;
+			break;
+		}
+		int $stamp = getFileMTime ($movies_to_check[$i]);
+		if($stamp < $gPlayblastStartTime)
+		{
+			$error = true;
+			break;
+		}
+	}
+
+	// if there is an error, blast everything, even the source movie. This reduces the possibility of there being a mismatch between what shows up in Insight and in the contextual movie
+	// due to the main playblast succeeding but the copy failing.
+	if($error)
+	{
+		string $movies_to_delete[] = {$outMovieName, $outMovieNameES, $gTargetMoviePath};
+		for($i = 0; $i < size($movies_to_delete); $i += 1)
+		{
+			if(`filetest -f $movies_to_delete[$i]`)
+				sysFile -del $movies_to_delete[$i];
+		}
+		PlayblastToolCheckMovie();	// check the movie to throw an error
+	}
+
+
+
+
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolBuildSequenceMovies - Submit process to the farm to build sequence movies which use the shot
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolBuildSequenceMovies()
+{
+	global string $gInputScene;		// The scene to playblast
+
+	string $department = getPath("DepartmentFromFilename", {$gInputScene});
+	string $project = getPath("ProjectFromFilename", {$gInputScene});
+	string $projectShort = toupper(getPath("QubeJobPrefix", {"", ""}));
+	string $sequence = getPath("SequenceFromFilename", {$gInputScene});
+	string $playblastType = getPath("PlayblastFromFilename", {$gInputScene});
+
+	PlayblastToolMessage("PlayblastToolBuildSequenceMovies gInputScene is: " + $gInputScene);
+	PlayblastToolMessage("PlayblastToolBuildSequenceMovies department is: " + $department);
+	PlayblastToolMessage("PlayblastToolBuildSequenceMovies project is: " + $project);
+	PlayblastToolMessage("PlayblastToolBuildSequenceMovies short project name is: " + $projectShort);
+	PlayblastToolMessage("PlayblastToolBuildSequenceMovies sequence is: " + $sequence);
+	PlayblastToolMessage("PlayblastToolBuildSequenceMovies playblastType is: " + $playblastType);
+
+//	// Test PATH
+//	string $each;
+//	string $test_path[];
+//	python ("import sys");
+//	$test_path = python("sys.path");
+//	PlayblastToolMessage("PYTHONPATH");
+//	for($each in $test_path)
+//		PlayblastToolMessage("	" + $each);
+//
+//	// Test of the Qube ENV variables
+//	string $qbjobid = "";
+//	$qbjobid = `getenv "QBJOBID"`;
+//	if($qbjobid != "")
+//		PlayblastToolMessage("The qube jobid is " + $qbjobid);
+//
+//	// Test user
+//	string $user_test;
+//	python("import qb");
+//	$user_test = python("qb.jobinfo(id=" + $qbjobid + ")[0]['user']");
+//	PlayblastToolMessage("The user who executed this script is " + $user_test);
+
+	string $qbjobid = "";
+	string $qbuser = "render";
+	$qbjobid = `getenv "QBJOBID"`;
+	if($qbjobid != "")
+		python("import qb");
+		$qbuser = python("qb.jobinfo(id=" + $qbjobid + ")[0]['user']");
+	PlayblastToolMessage("The user who executed this script is " + $qbuser);
+
+
+	// build the qbsub command
+	string $qbsubCmd;
+	string $jobName = $projectShort + "__" + $sequence + "__MOVIES";
+	string $cluster = "scripts";
+	string $rfxBuildMoviesPath = getPath ("ProjectPythonDir", {}) + "/rfxBuildMovies.py";
+	$qbsubCmd = (`about -linux`)?`getenv "QBDIR"` + "/bin/qbsub ":"qbsub ";
+//	$qbsubCmd += "--user render ";
+	$qbsubCmd += "--user " + $qbuser + " ";
+	$qbsubCmd += "--priority 4000 ";
+	$qbsubCmd += "--name " + $jobName + " ";
+	$qbsubCmd += "--cluster /" + $cluster + " ";
+	$qbsubCmd += "--requirements host." + $cluster + "=1 ";
+	if(`filetest -f $rfxBuildMoviesPath`)
+		$qbsubCmd += "/usr/bin/python " + $rfxBuildMoviesPath + " ";
+	else
+		$qbsubCmd += "/usr/bin/python /data/film/apps/reelfx/python/rfxBuildMovies.py ";
+	$qbsubCmd += "-v " + $department + " ";
+	$qbsubCmd += "-p " + $project + " ";
+	$qbsubCmd += "-q " + $sequence + " ";
+	$qbsubCmd += "-t " + $playblastType;
+
+	PlayblastToolMessage("qbsubCmd: " + $qbsubCmd);
+	system($qbsubCmd);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolFastStartMovie - Run qt fast start on the movie
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolFastStartMovie()
+{
+	global int $gDoMovie;			// Make a movie?
+	global int $gFastStart;			// do fast start?
+	global string $gTargetMoviePath;	// Where to write movies, if desired
+	global string $gMovieType;		// mov or avi
+
+	if(!$gDoMovie)
+	{
+		PlayblastToolMessage("Movie generation disabled.");
+		return;
+	}
+	if(!$gFastStart)
+	{
+		PlayblastToolMessage("Fast Start disabled.");
+		return;
+	}
+
+	// move the non fast start movie
+	string $movieDir = dirname($gTargetMoviePath);
+	string $basename = basename($gTargetMoviePath, "");
+	string $buf[];
+	tokenize($basename, ".", $buf);
+	$non_fs_movie = $buf[0] + "_NoFS";
+	for($i = 1; $i < size($buf); $i += 1)
+	{
+		$non_fs_movie += "." + $buf[$i];
+	}
+
+	string $non_fs_movie = $movieDir + "/" + $non_fs_movie;
+
+	PlayblastToolMessage("Archiving non fast start movie to " + $non_fs_movie + ".");
+
+	sysFile -ren $non_fs_movie $gTargetMoviePath;
+
+	// build the fast start command
+	string $cmd = "/usr/bin/qt-faststart";
+	string $cmd_long = $cmd + " " + $non_fs_movie + " " + $gTargetMoviePath;
+
+	//Execute the system command in Python so we can wrap it in a 30 second timeout
+	PlayblastToolMessage("Executing Fast Start Command... " + $cmd_long);
+	python("import sys");
+	python("sys.path.append('/data/film/apps/reelfx/python')");
+	python("import timeout");
+	string $fastStartMovieResult[] = python("timeout.timeout_command(['" + $cmd + "', '" + $non_fs_movie + "', '" + $gTargetMoviePath + "'], 30)");
+
+	if($fastStartMovieResult[0] == "killed")
+		PlayblastToolMessage("The qt-faststart process failed");
+	else
+		PlayblastToolMessage("The qt-faststart process succeeded");
+
+	// remove the non fast start version
+	sysFile -del $non_fs_movie;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolFlvtool - Run flvtool++ on the flv file
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolFlvtool()
+{
+	global string $gTargetFLVMoviePath;	// Where to write movies, if desired
+	global string $gTargetFLVMoviePathTemp;	// Where to write movies, if desired
+
+	string $cmd = "/usr/local/bin/flvtool++ " + $gTargetFLVMoviePathTemp + " " + $gTargetFLVMoviePath + "\n";
+	PlayblastToolMessage("flvtool++ command: " + $cmd);
+	system($cmd);
+
+	// remove the temp flv file
+	if (size(glob($gTargetFLVMoviePathTemp)))
+		system("rm -r " + $gTargetFLVMoviePathTemp);
+
+}
+
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolStartMessage()
+{
+	global int $gSessionStartTime;
+	$gSessionStartTime = eval("systemTime -asTimeStamp");
+	PlayblastToolMessage("Process initiated at " + eval("systemTime"));
+}
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolEndMessage()
+{
+	global int $gSessionStartTime;
+	int $elapsed = eval("systemTime -asTimeStamp") - $gSessionStartTime;
+	int $mins = eval("timeStampToDate -fmt \"%M\" \"" + $elapsed + "\"");
+	int $secs = eval("timeStampToDate -fmt \"%S\" \"" + $elapsed + "\"");
+
+	PlayblastToolMessage("Process successfully completed at " + eval("systemTime"));
+	PlayblastToolMessage("Elapsed time: " + $mins + " minute" + (($mins != 1) ? "s" : "") + ", " + $secs + " second" + (($secs != 1) ? "s" : "") + ".");
+}
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCheckPreCallback()
+{
+	global string $gPlayblastPreCallback; // if it exists, this will be the path to the pre playblast callback
+	if(exists("PlayblastToolPreCallback"))
+	{
+		$gPlayblastPreCallback = "PlayblastToolPreCallback";
+		//string $buffer[];
+		//string $results = `whatIs PlayblastToolPreCallback`;
+		//tokenize($results, ":", $buffer);
+		//if(size($buffer) == 2)
+		//{
+			//$gPlayblastPreCallback = $buffer[2];
+		//}
+	}
+}
+// ---------------------------------------------------------------------------------------------------
+proc PlayblastTool.hideAllLights()
+{
+	string $lights[] = `ls -lights`;
+	for ($light in $lights)
+	{
+		PlayblastToolMessage("Hiding light '" + $light + "'.");
+		if (`referenceQuery -inr $light`)
+		{
+			if (getAttr($light + ".v") == 0)
+			{
+				continue;
+			}
+
+			if (!`getAttr -l ($light + ".v")`)
+			{
+				if (!size(`listConnections -s 1 -d 0 ($light + ".v")`))
+				{
+					catch(`setAttr ($light + ".v") 0`);
+					continue;
+				}
+			}
+
+			if (getAttr($light + ".lodv") == 0)
+			{
+				continue;
+			}
+
+			if (!`getAttr -l ($light + ".lodv")`)
+			{
+				if (!size(`listConnections -s 1 -d 0 ($light + ".lodv")`))
+				{
+					catch(`setAttr ($light + ".lodv") 0`);
+					continue;
+				}
+			}
+
+			if (getAttr($light + ".ove") == 1 && getAttr($light + ".ovv") == 0)
+			{
+				continue;
+			}
+
+			if (!`getAttr -l ($light + ".ove")` && !`getAttr -l ($light + ".ovv")`)
+			{
+				if (!size(`listConnections -s 1 -d 0 ($light + ".ove") ($light + ".ovv")`))
+				{
+					catch(`setAttr ($light + ".ove") 1`);
+					catch(`setAttr ($light + ".ovv") 0`);
+					continue;
+				}
+			}
+			warning("Could not hide light '" + $light + "'.");
+			continue;
+		}
+		else
+		{
+			if (getAttr($light + ".v") != 0)
+			{
+				if (`getAttr -l ($light + ".v")`)
+				{
+					catch(`setAttr -l 0 ($light + ".v")`);
+				}
+
+				string $cons[] = `listConnections -s 1 -d 0 -p 1 -c 0 ($light + ".v")`;
+				if (size($cons))
+				{
+					catch(`disconnectAttr $cons[0] ($light + ".v")`);
+				}
+
+				catch(`setAttr ($light + ".v") 0`);
+			}
+		}
+	}
+}
+// ------------------------------------------------------------------------- //
+// Load Light Rig
+// ------------------------------------------------------------------------- //
+global proc PlayblastTool.loadLightRig()
+{
+	global int $gFramePreRollStart;
+	global string $gLightRigName;
+	global string $gCamera;
+	global string $gInputScene;
+
+	// See if we have a light rig to import.
+	if (size($gLightRigName))
+	{
+		string $filename = getPath("ProjectPresetDir", {}) + "/lightRigs/" +
+			$gLightRigName + ".ma";
+
+		// See if the light rig file exists.
+		if (`filetest -f $filename`)
+		{
+			PlayblastTool.hideAllLights();
+
+			PlayblastToolMessage("Importing " + $filename + ".");
+
+			// Import the light rig.
+			string $nodes[] = `file -ns "lightRig" -rnn -i $filename`;
+			string $groups[] = `ls -as $nodes`;
+
+			// Change the current time to orient the lights to the camera.
+			insight();
+			string $sq = getPath("SequenceFromFilename", {$gInputScene});
+			string $sh = getPath("ShotFromFilename", {$gInputScene});
+			int $hero_frame = insight.shot.getHeroFrame("", $sq, $sh);
+			if ($hero_frame)
+			{
+				// If we have a hero frame, use it.
+				currentTime($hero_frame);
+			}
+			else
+			{
+				// Otherwise, use the start of the frame range.
+				currentTime($gFramePreRollStart);
+			}
+
+			// Orient the light rig to the starting angle of the camera.
+			for ($group in $groups)
+			{
+				string $xform = $gCamera;
+				if (!`objectType -isa "transform" $xform`)
+				{
+					string $pars[] = `listRelatives -p -pa $gCamera`;
+					$xform = $pars[0];
+				}
+				delete(`orientConstraint -sk "x" -sk "z" $xform $group`);
+			}
+		}
+		else
+		{
+			PlayblastToolQuitError("Could not find light rig '" + $gLightRigName + "' -> " + $filename + ".");
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolLockLocal
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolLockLocal()
+{
+	global string $gLocal;
+
+	PlayblastToolMessage("Checking desktop lock for " + $gLocal);
+	python("import qb");
+	python("if not bool(qb.jobinfo(filters={'hosts':'" + $gLocal + "'}, status='pending')):    qb.workerlock({'name':'" + $gLocal + "'}, lockingString='host.processor_all=1')");
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolInsightCallback
+//
+//	Media statuses
+//	--------------
+//	1 - pending
+//	2 - failed
+//	3 - complete
+//	4 - running
+//
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolInsightCallback(int $status, string $message)
+{
+	global int $gInsightMediaFileId; // Media file id for insight playblast.
+
+	PlayblastToolMessage("gInsightMediaFileId: " + string($gInsightMediaFileId));
+	PlayblastToolMessage("status: " + string($status));
+	PlayblastToolMessage("message: " + $message);
+
+	int $id = $gInsightMediaFileId;
+	if($id == 0)
+	{
+		PlayblastToolMessage("The gInsightMediaFileId was 0, skip callback to Insight");
+		return;
+	}
+
+	string $result = insightUpdateMediaFileStatus($gInsightMediaFileId, $status, $message);
+	PlayblastToolMessage("The result of the NEW callback to Insight was: " + $result);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolUpdateInsightJobId -
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolUpdateInsightJobId()
+{
+	global int $gInsightMediaFileId; // Media file id for insight playblast.
+
+	int $media_file_id = $gInsightMediaFileId;
+	if($media_file_id == 0)
+		return;
+
+	int $qube_job_id = 0;
+	string $env = getenv("QBJOBID");
+	if(size($env))
+	{
+		$qube_job_id = int($env);
+		insightUpdateMediaFileQubeJobId($media_file_id, $qube_job_id);
+	}
+	else
+		PlayblastToolMessage("Warning: Qube job id 'QBJOBID' could not be retrieved.\n");
+
+	PlayblastToolInsightCallback(4, "Playblasting.");
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastTooCheckPostCallback - Sets the global string for the path to the post callback
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolCheckPostCallback()
+{
+	global string $gPlayblastPostCallback; // if it exists, this will be the path to the post playblast callback
+	if(exists("PlayblastToolPostCallback"))
+	{
+		string $buffer[];
+		string $results = whatIs("PlayblastToolPostCallback");
+		tokenize($results, ":", $buffer);
+		if(size($buffer) == 2)
+			$gPlayblastPostCallback = $buffer[1];
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------
+// PlayblastToolPostPlayblast - Everything that is needed after the playblast is done
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastToolPostPlayblast()
+{
+	global int $gBypassPostPlayblast;
+	global int $gFastStart;
+	global int $gDoMovie;
+	global string $gPlayblastPostCallback;
+	global string $gLocal;
+
+	// ---------------------
+	// Stop now if post process will be handled elsewhere.
+	// ---------------------
+	if ($gBypassPostPlayblast)
+	{
+		PlayblastToolQuitSuccess();
+		return;
+	}
+
+	// ---------------------
+	// Check that the playblasted frames made it
+	// ---------------------
+	PlayblastToolMessage("Checking Playblast Frames.");
+	PlayblastToolInsightCallback(4, "Checking Playblast Frames.");
+	if(catch(eval("PlayblastToolCheckFrames")))
+		PlayblastToolQuitError("Errors occured while checking playblast frames (PlayblastToolCheckFrames).");
+
+	// ---------------------
+	// Run the post call back if we have one
+	// ---------------------
+	PlayblastToolMessage("Running PostCallback.");
+	if($gPlayblastPostCallback != "")
+		PlayblastToolPostCallback;
+
+	// ---------------------
+	// Make the movie
+	// ---------------------
+	PlayblastToolMessage("Creating the mov and flv files.");
+	PlayblastToolInsightCallback(4, "Creating the mov and flv files.");
+	if(catch(eval("PlayblastToolCreateMovie")))
+		PlayblastToolQuitError("Errors occured while creating movie (PlayblastToolCreateMovie).");
+
+	// ---------------------
+	// flvtool++ the flv movie
+	// ---------------------
+	PlayblastToolMessage("Running flvtool++.");
+	if(catch(eval("PlayblastToolFlvtool")))
+		PlayblastToolQuitError("Errors occured while creating flv (PlayblastToolFlvtool).");
+
+	// ---------------------
+	// Check the mov file
+	// ---------------------
+	PlayblastToolMessage("Checking the mov.");
+	if(catch(eval("PlayblastToolCheckMovie")))
+		PlayblastToolQuitError("Errors occured while checking movie (PlayblastToolCheckMovie).");
+
+	// ---------------------
+	// Check the flv file
+	// ---------------------
+	PlayblastToolMessage("Checking the flv.");
+	if(catch(eval("PlayblastToolCheckFLVMovie")))
+		PlayblastToolQuitError("Errors occured while checking FLV movie (PlayblastToolCheckFLVMovie).");
+
+	// ---------------------
+	// fast start the mov file
+	// ---------------------
+	if($gFastStart)
+	{
+		PlayblastToolMessage("Fast Starting Movie.");
+		if(catch(eval("PlayblastToolFastStartMovie")))
+			PlayblastToolQuitError("Errors occured while fast starting movie (PlayblastToolFastStartMovie).");
+
+		// check the movie again (fast-started version)
+		PlayblastToolMessage("Checking Movie...");
+		if(catch(eval("PlayblastToolCheckMovie")))
+			PlayblastToolQuitError("Errors occured while checking movie (PlayblastToolCheckMovie).");
+	}
+	// ---------------------
+	// propogate the movie to the location needed for the movie robot
+	// ---------------------
+	if($gDoMovie)
+	{
+		PlayblastToolMessage("Propogating mov and flv files.");
+		if(catch(eval("PlayblastToolPropogateMovie")))
+			PlayblastToolQuitError("Errors occured propogating movie.");
+		PlayblastToolInsightCallback(4, "Movies Complete.");
+	}
+
+	// ---------------------
+	// propogate frames to the location needed for the movie robot
+	// ---------------------
+	PlayblastToolMessage("Propogating Frames.");
+	if(catch(eval("PlayblastToolPropogateFrames")))
+		PlayblastToolQuitError("Errors occured propogating Frames.");
+
+	// ---------------------
+	// create versioned archive
+	// ---------------------
+	PlayblastToolMessage("Creating versioned archive.");
+	if(catch(eval("PlayblastToolVersionDir")))
+		PlayblastToolQuitError("Errors occured creating the versioned archive.");
+	//PlayblastToolMessage("DEBUG: Stopping after PlayblastToolVersionDir.");
+	//PlayblastToolQuitSuccess();
+
+	// ---------------------
+	// Kick off sequence movies
+	// ---------------------
+	if($gDoMovie)
+	{
+		PlayblastToolMessage("Submitting rfxBuildMovies to the farm.");
+		if(catch(eval("PlayblastToolBuildSequenceMovies")))
+			PlayblastToolQuitError("Errors submitting sequence movies to the farm.");
+	}
+
+	// --------------------------------------------------------
+	// Perform Insight callback
+	// --------------------------------------------------------
+	//if(catch(eval("PlayblastToolInsightCallback")))
+	//	PlayblastToolQuitError("Errors occured submitting callback to Insight (PlayblastToolInsightCallback).");
+	if(catch(`PlayblastToolInsightCallback 3 ""`))
+		PlayblastToolQuitError("Errors occured submitting callback to Insight (PlayblastToolInsightCallback).");
+
+	// --------------------------------------------------------
+	// Lock workstation if this was a local playblast
+	// --------------------------------------------------------
+	if($gLocal != "")
+	{
+		if(catch(eval("PlayblastToolLockLocal")))
+			PlayblastToolQuitError("Errors occured locking the local host (PlayblastToolLockLocal).");
+	}
+
+	// --------------------------------------------------------
+	// Restore the main window if this was a local playblast
+	// --------------------------------------------------------
+	if($gLocal != "")
+	{
+		if(catch(eval("PlayblastToolRestoreMainWindow")))
+			PlayblastToolQuitError("Errors occured restoring the main window (PlayblastToolRestoreMainWindow).");
+	}
+
+	// ---------------------
+	// Stop the script editor log
+	// ---------------------
+	if(catch(eval("PlayblastToolSetLogState 0")))
+		PlayblastToolQuitError("Errors occured stopping the log (PlayblastToolSetLogState).");
+
+
+	// ---------------------
+	// Output the end message
+	// ---------------------
+	if(catch(eval("PlayblastToolEndMessage")))
+		PlayblastToolQuitError("Errors occured outputting end message (PlayblastToolEndMessage).");
+
+	// ---------------------
+	// Get out of here
+	// ---------------------
+	PlayblastToolQuitSuccess();
+}
+// ---------------------------------------------------------------------------------------------------
+// PlayblastTool - Get everything ready to playblast - then evalDeferred the playblast routines.
+//				   This is so that control will return to Maya so it can finish initializing the graphics
+// ---------------------------------------------------------------------------------------------------
+global proc PlayblastTool(string $args)
+{
+	// load plugins and source scripts
+	eval("source \"argList.mel\"");
+	eval("source \"parseXML.mel\"");
+	eval("source \"fileIO.mel\"");
+	eval("source \"UIComponents.mel\"");
+	loadPlugins;
+
+	// global vars
+	global string	$gInstructionFile;		// name of the instruction file
+	global string	$gLockFile;			// name of the lock file
+	global string	$gLocal;			// HOSTNAME if playblast is local
+	global string	$gMainWindow;			// handle for the Maya Main window
+	global int	$gOriginalSize[];		// main window size, [L,W]
+	global int	$gOriginalPosition[];		// tlc of Main window, [X,Y]
+	global string	$gPlayblastPreCallback;		// if it exists, this will be the path to the pre playblast callback
+	global string	$gPlayblastPostCallback;	// if it exists, this will be the path to the post playblast callback
+	global int	$gInsightMediaFileId;		// media file id for insight playblast
+	global string	$gInputScene;			// the scene to playblast
+	global int	$gIsStereo;				// stereo show
+	global int  $gDoDeepPlayblast;      // deep playblast
+	global string $gNamespaceRenderLayer;   // name of the render layer that has namespace info coded
+	global string $gMeshesWithColorsOn[];
+    global string $gGpuMeshes[];
+	global string $gTargetMoviePath;
+    global string $gDeepPlayblastMoviePath;
+	global int $gBypassPostPlayblast; // Skip the post playblast process (will be handled elsewhere).
+	global int $gPostPlayblastOnly; // Just run the post playblast process.
+	global int $gPlayblasting;
+	$gPlayblasting = true;		// Used by other processes to determine if we are in the playblast tool
+
+	$gNamespaceRenderLayer = "";
+	$gDoDeepPlayblast = 0;
+
+
+	//$gInsightMediaFileId = int(getArgValueDefault($args, "media_file_id", "0"));
+
+	// find the pre and post callback scripts if they exist
+	//
+	PlayblastToolCheckPreCallback();
+	PlayblastToolCheckPostCallback();
+
+	// ---------------------
+	// Setup
+	// ---------------------
+	// ---------------------
+	// Output the start message
+	// ---------------------
+	if(catch(eval("PlayblastToolStartMessage")))
+		PlayblastToolQuitError("Errors occured outputting start message (PlayblastToolStartMessage).");
+
+	// parse arg list
+	$gInstructionFile = getArgValue($args, "instructions");
+	$gLockFile = getArgValue($args, "lockFile");
+	$gLocal = getArgValue($args, "local");
+	PlayblastToolMessage("gLocal is " + $gLocal);
+
+	// ---------------------
+	// Create lock file
+	// ---------------------
+	PlayblastToolMessage("Creating lock file...");
+	if(catch(eval("PlayblastToolCreateLockFile")))
+		PlayblastToolQuitError("Errors occured creating lock file (PlayblastToolCreateLockFile).");
+
+	// ---------------------
+	// parse instructions
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Parsing Instructions...");
+	if(catch(eval("PlayblastToolParseInstructions")))
+		PlayblastToolQuitError("Errors occured parsing instructions. (PlayblastToolParseInstructions)");
+
+	// ---------------------
+	// Update insight with the qube job id.
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Sending the Qube job id to Insight...");
+	if(catch(eval("PlayblastToolUpdateInsightJobId")))
+		PlayblastToolQuitError("Errors occured updaing Insight with the Qube job id. (PlayblastToolUpdateInsightJobId)");
+
+	// ---------------------
+	// print instructions
+	// ---------------------
+	if(catch(eval("PlayblastToolPrintOptions")))
+		PlayblastToolQuitError("Errors occured printing options (PlayblastToolPrintOptions).");
+
+	// ---------------------
+	// Start the script editor log
+	// ---------------------
+	if(catch(eval("PlayblastToolSetLogState 1")))
+		PlayblastToolQuitError("Errors occured starting the log (PlayblastToolSetLogState).");
+
+	// --------------------------------------------------------------------- //
+	// Post Playblast Process Override.
+	// --------------------------------------------------------------------- //
+	if ($gPostPlayblastOnly)
+	{
+		// If this is a post playblast process job, just jump to the post
+		// process.
+		PlayblastToolMessage("Post Process Only");
+		PlayblastToolPostPlayblast();
+		return;
+	}
+
+	// ---------------------
+	// Set this up with playblast info.
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting this file as a playblast file...");
+	if(catch(eval("fileInfo \"isPlayblast\" 1")))
+		PlayblastToolQuitError("Errors occured setting render globals (fileInfo \"isPlayblast\" 1).");
+
+	// ---------------------
+	// Open the scene
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Opening scene...");
+	if(catch(eval("PlayblastToolOpenScene")))
+		PlayblastToolQuitError("Errors occured opening scene (PlayblastToolOpenScene).");
+
+	// ---------------------
+	// Setup render globals
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting up Render Globals...");
+	if(catch(eval("PlayblastToolSetupRenderGlobals")))
+		PlayblastToolQuitError("Errors occured setting render globals (PlayblastToolSetupRenderGlobals).");
+
+	// ---------------------
+	// Set Smoothing
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting Smoothing...");
+	if(catch(eval("PlayblastToolSetSmoothing")))
+		PlayblastToolQuitError("Errors occured setting smoothing (PlayblastToolSetSmoothing).");
+
+
+	// ---------------------
+	// Set Universal Eye Textures
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting Universal Eye Textures...");
+	if(catch(eval("PlayblastToolSetUniversalEyeTextures")))
+		PlayblastToolQuitError("Errors occured setting smoothing (PlayblastToolSetUniversalEyeTextures).");
+
+
+	//
+
+	// ---------------------
+	// Set Asset Render Res
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting Render Res...");
+	if(catch(eval("PlayblastToolSetAssetRenderRes")))
+		PlayblastToolQuitError("Errors occured setting render res (PlayblastToolSetAssetRenderRes).");
+
+	// ---------------------
+	// Set Asset Universal Eye
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting Universal Eye...");
+	if(catch(eval("PlayblastToolSetUniversalEyeOn")))
+		PlayblastToolQuitError("Errors occured setting render res (PlayblastToolSetUniversalEyeOn).");
+
+
+	// ---------------------
+	// Perform per-asset callbacks
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Executing per-asset callbacks...");
+	if(catch(eval("PlayblastToolExecutePerAssetCallbacks")))
+		PlayblastToolQuitError("Errors occured performing per-asset callbacks (PlayblastToolExecutePerAssetCallbacks).");
+
+	// ---------------------
+	// Do deep playblast setup
+	// ---------------------
+    if ($gDoDeepPlayblast)
+    {
+        PlayblastToolSeparator();
+        PlayblastToolMessage("Executing Deep Playblast setup...");
+        if (catch(eval("PlayblastToolDeepPlayblastSetup")))
+            PlayblastToolQuitError("Errors occured performing Deep Playblast setup (PlayblastToolDeepPlayblastSetup).");
+    }
+
+	// ---------------------
+	// Check Camera
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Checking Camera...");
+	if(catch(eval("PlayblastToolCheckCamera")))
+		PlayblastToolQuitError("Errors occured checking camera (PlayblastToolCheckCamera).");
+
+	// ---------------------
+	// Import light rig.
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Loading Light Rig...");
+	if (catch(eval("PlayblastTool.loadLightRig")))
+	{
+		PlayblastToolQuitError("Errors occurred while loading the light rig (PlayblastTool.loadLightRig).");
+	}
+
+	// ---------------------
+	// Set Paths
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting Paths...");
+	if(catch(eval("PlayblastToolRemapPaths")))
+		PlayblastToolQuitError("Errors occured setting paths (PlayblastToolRemapPaths).");
+
+	// ---------------------
+	// Setup Model Editor
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting up Model Editor...");
+	if(catch(eval("PlayblastToolSetupModelEditor")))
+		PlayblastToolQuitError("Errors occured setting up model editor (PlayblastToolSetupModelEditor).");
+
+	// ---------------------
+	// Setup Overlay
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting up Overlay...");
+	if(catch(eval("PlayblastToolSetupOverlay")))
+		PlayblastToolQuitError("Errors occured setting up overlay (PlayblastToolSetupOverlay).");
+
+	// ---------------------
+	// Apply stereo overrides
+	// ---------------------
+	if ($gIsStereo)
+	{
+		PlayblastToolSeparator();
+		PlayblastToolMessage("Applying Stereo Overrides...");
+		if (catch(eval("source \"stereoCameras\"")))
+			PlayblastToolQuitError("Errors occured sourcing stereoCameras.mel.");
+		if (catch(eval("stereoCameras.readShotSettingsFromPipeline")))
+			PlayblastToolQuitError("Errors occured applying stereo overrides (stereoCameras.readShotSettingsFromPipeline).");
+	}
+
+	// ---------------------
+	// Maximize Main Window
+	// ---------------------
+//	if ($gLocal != "")
+	{
+		PlayblastToolSeparator();
+		PlayblastToolMessage("Resizing Main Window...");
+		if (catch(eval("PlayblastToolMaximizeMainWindow")))
+			PlayblastToolQuitError("Errors setting the Main Window size (PlayblastToolMaximizeMainWindow).");
+	}
+
+	// ---------------------
+	// Accessories
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Setting up Accessories...");
+	string $sequence = getPath("SequenceFromFilename", {$gInputScene});
+	string $shot = getPath("ShotFromFilename", {$gInputScene});
+	string $acc_cmd = "accessories(\"" + $sequence + "\", \"" + $shot + "\");";
+	PlayblastToolMessage($acc_cmd);
+	if (catch(eval($acc_cmd)))
+	{
+		PlayblastToolQuitError("Errors occured setting up accessories (accesories.mel).");
+	}
+
+	// small bug fix. Sometimes objects are still selected when maya playblasts. This just makes sure that's not the case.
+	//
+	select -clear;
+
+	// ---------------------
+	// Run the pre call back if we have one
+	// ---------------------
+	PlayblastToolSeparator();
+	PlayblastToolMessage("Running PreCallback...");
+	if($gPlayblastPreCallback != "")
+		PlayblastToolPreCallback;
+
+	// ------------- End of setup
+	evalDeferred -lp "PlayblastToolPrePlayblast";
+
+}
+
+
+
