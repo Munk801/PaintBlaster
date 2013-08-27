@@ -1,9 +1,5 @@
 #!/usr/bin/env python
 
-# script created by pymel.tools.mel2py from mel file:
-# /mounts/elmo/people/slu/color_blast/DeepPlayblastUtilities.mel
-
-
 '''
 Description:
     A collection of utility functions for deep playblasts:
@@ -78,10 +74,16 @@ Revisions:  05/22/12    Rev 1.0     mjefferies
             - Switched to always using fallback shader assignment method (shading group hijack method)
 '''
 
-from pymel.all import *
-import pymel.core as pm
+# Built-in
+import json
 import os
 import hashlib
+import random
+
+# Maya
+from pymel.all import *
+import pymel.core as pm
+
 # ----------------------------------------------------------------------------
 # source statements
 #
@@ -95,9 +97,7 @@ import hashlib
 
 # Lets hope I can make this beautiful class.. I dunno
 class DeepPlayblastRenderLayer(object):
-    def __init__(self, strucfile, gpu_meshes=[]):
-        #Will remove strucfile
-        self.struc = strucfile
+    def __init__(self, gpu_meshes=[]):
         self.gpu_meshes = gpu_meshes
         self.namespaces = []
         self.colors = []
@@ -108,10 +108,27 @@ class DeepPlayblastRenderLayer(object):
         self.old_bkg_top_color = pm.displayRGBColor("backgroundTop", query=True)
         self.old_bkg_bottom_color = pm.displayRGBColor("backgroundBottom",
                                                        query=True)
-        pass
+    def _getRandomColors(self, combineSetColors = None):
+        for namespace in self.namespaces:
+            if combineSetColors:
+                if mel.gmatch(namespace, "*[:]*"):
+                    namespace=str(mel.getNamespaceFromString(namespace))
 
-    def get_namespace_colors(self, namespace):
-        pass
+            m = hashlib.sha1()
+            m.update(namespace)
+            checksum = int(m.hexdigest(), 16)
+            random.seed(checksum)
+            r = random.uniform(1, 25) / 25.0
+            g = random.uniform(1, 25) / 25.0
+            b = random.uniform(1, 25) / 25.0
+            # mel.seed("DeepPlayblast", checksum)
+            # r=float(mel.rand("DeepPlayblast", 1, 25) / 25.0)
+            # g=float(mel.rand("DeepPlayblast", 1, 25) / 25.0)
+            # b=float(mel.rand("DeepPlayblast", 1, 25) / 25.0)
+            self.colors.append([r,g,b])
+
+    def get_namespace_colors(self):
+        self._getRandomColors()
 
     def get_meshes_with_color(self):
         """ Retrieve a list of all the meshes that need to display color. """
@@ -142,12 +159,6 @@ class DeepPlayblastRenderLayer(object):
                                   shader.attr('surfaceShader'))):
                 ns_connections[0].connectAttr("outColor", shader.attr('surfaceShader'),
                                               f=True)
-                # if len(ns_connections) and not pm.isConnected((ns_connections[0].attr(".outColor")),
-                #                                      (s +
-                #                                       ".surfaceShader")):
-                #     connectAttr((nsShader[0] + ".outColor"),
-                #                 (shadingGroups[i] + ".surfaceShader"),
-                #                 f=True)
 
     def pop_namespace_materials(self):
         shadingGroups = pm.ls(type="shadingEngine")
@@ -199,6 +210,19 @@ class DeepPlayblastRenderLayer(object):
         self.handle_gpu_mesh(False)
         self.pop_namespace_materials()
 
+    def get_namespaces(self):
+        namespaces = []
+        nodes = pm.ls(visible=True, type=['mesh', 'nurbsSurface'])
+        for node in nodes:
+            name = node.name()
+            if '|' in name:
+                name = name.rpartition('|')[-1]
+            if ':' in name:
+                namespaces.append(name.rpartition(':')[0])
+            else:
+                continue
+        self.namespaces = list(set(namespaces))
+
     def create(self):
         _loadPlugins()
         # Query for the shading group set
@@ -243,11 +267,14 @@ class DeepPlayblastRenderLayer(object):
                     except RuntimeError:
                         shade_remove = None
                         print "Problem remove " + str(item) + " from the initialShadingGroup"
+        # Get namespaces and generate colors based on those namespaces
+        self.get_namespaces()
+        self.get_namespace_colors()
         # Must replace with internal object function
-        _getNamespaceInfoFromStructureFile(self.struc, self.namespaces,
-                                           [], [], [], [], [])
+        # _getNamespaceInfoFromStructureFile(self.struc, self.namespaces,
+        #                                    [], [], [], [], [])
 
-        _getColors(self.namespaces, self.colors)
+        # _getColors(self.namespaces, self.colors)
         old_namespace = pm.namespaceInfo(currentNamespace=True)
         old_render_layer = pm.editRenderLayerGlobals(q=True, currentRenderLayer=True)
         layer = ""
@@ -259,7 +286,6 @@ class DeepPlayblastRenderLayer(object):
             if layer == '':
                 layer = pm.createRenderLayer(makeCurrent=True, name="namespaceLayer")
 
-            import pdb; pdb.set_trace()
             if not pm.namespace(set=(":" + str(cur_namespace))):
                 continue
 
@@ -328,8 +354,8 @@ class DeepPlayblastRenderLayer(object):
                             # switch back to namespace layer and try again.
                             existingShaders=stringArrayReverse(existingShaders)
                             """
-                                            To-do: Add an explanation about why reversing the shaders array is necessary once we've confirmed that we are good. -HM
-                                            """
+                            To-do: Add an explanation about why reversing the shaders array is necessary once we've confirmed that we are good. -HM
+                            """
                             # store the existing material assignments
                             comps=[]
                             indices=[]
@@ -389,81 +415,6 @@ class DeepPlayblastRenderLayer(object):
             pm.editRenderLayerGlobals(currentRenderLayer=old_render_layer)
 
         self.layer = layer
-            # if geom:
-            #     material = shadingNode("surfaceShader", asShader=True)
-            #     material.setAttr("outColor", red, green, blue, type="double3")
-            #     shader = pm.sets(renderable=True, noSurfaceShader=True, empty=True)
-            #     pm.connectAttr(material.attr('outColor'),
-            #                    shader.attr("surfaceShader"), f=True)
-            #     for geo in geom:
-            #         existing_shaders = pm.listConnections(geo, source=False, plugs=False,
-            #                                               destination=True, type="shadingEngine")
-            #         if existing_shaders:
-            #             pm.editRenderLayerMembers(layer, geo)
-            #             retry = 0
-            #             # First try to set the shader in object mode
-            #             retry = 1
-            #             if retry == 1:
-            #                 for cur_shader in existing_shaders:
-            #                     try:
-            #                         default_shader = cur_shader.getAttr('defaultShader')
-            #                     except MayaAttributeError:
-            #                         # if not pm.objExists(cur_shader.getAttr('defaultShader')):
-            #                         cur_shader.addAttr(ln="defaultShader", at="message")
-            #                         default_mat = pm.listConnections(shader.getAttr('surfaceShader'),
-            #                                                          s=True, d=True)
-            #                         if default_mat:
-            #                             pm.connectAttr(default_mat.getAttr('message'),
-            #                                            cur_shader.getAttr('namespaceShader'))
-            #                 retry = 0
-
-            #             if retry == 1:
-            #                 print "DeepPlayblastUtilities: Use alternate strategy for {0}".format(geo)
-            #                 existing_shaders = pm.stringArrayReverse(existing_shaders)
-            #                 comps = []
-            #                 indices = []
-            #                 for i in range(1, len(existing_shaders)):
-            #                     indices.append(len(comps))
-            #                     assigned = pm.sets(existing_shaders[i], q=True)
-            #                     for j in range(0, len(assigned)):
-            #                         obj = pm.ls(o=assigned[j])
-            #                         if obj[0] == geo:
-            #                             comps.append(assigned[j])
-
-            #                 for i in range(0, len(existing_shaders)):
-            #                     pm.sets(geo, rm=existing_shaders[i], e=True)
-
-            #                 if pm.sets(geo, noWarnings=True, forceElement=shader):
-            #                     mel.warning("DeepPlayblast: Couldn't assign namespace shader")
-            #                     continue
-            #                 else:
-            #                     print "Alternate shader"
-
-            #                 pm.editRenderLayerGlobals(currentRenderLayer="defaultRenderLayer")
-            #                 pm.sets(geo, e=True, fe=existing_shaders[0])
-            #                 # XXX TODO FINISH EDITING
-            #                 for k in range(0,len(indices)):
-            #                     end=int((k<len(indices) - 1) and indices[k + 1] or (len(comps)))
-            #                     for m in range(indices[k],end):
-            #                         pm.sets(comps[m],
-            #                             e=1,fe=existingShaders[k + 1])
-            #                 # switch to namespace layer
-            #                 pm.editRenderLayerGlobals(currentRenderLayer=layer)
-
-            # if len(gpu_mesh)>0:
-            #     # end if size($existingShaders)
-            #     for j in range(0,len(gpu_mesh)):
-            #         pm.editRenderLayerMembers(layer,gpu_mesh[j])
-            #         pm.setAttr((gpu_mesh[j] + ".defaultColor"),
-            #             red,green,blue,
-            #             type='double3')
-            #         self.gpu_meshes.append(gpu_mesh[j])
-
-        # if layer != "":
-            # pm.namespace(set=old_namespace)
-            # pm.editRenderLayerGlobals(currentRenderLayer=old_render_layer)
-
-        # return layer
 
 # ----------------------------------------------------------------------------
 # load all plug-ins required for this mel script
@@ -757,7 +708,7 @@ def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
 
                         # switch to namespace layer
                         editRenderLayerGlobals(currentRenderLayer=layer)
-
+        # With gpu meshes, we cannot set the shader.  We must change the default color for them
         if len(gpuMesh)>0:
             # end if size($existingShaders)
             for j in range(0,len(gpuMesh)):
