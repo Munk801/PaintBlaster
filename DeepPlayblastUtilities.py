@@ -3,10 +3,7 @@
 # script created by pymel.tools.mel2py from mel file:
 # /mounts/elmo/people/slu/color_blast/DeepPlayblastUtilities.mel
 
-from pymel.all import *
-import os
 
-import hashlib
 '''
 Description:
     A collection of utility functions for deep playblasts:
@@ -79,16 +76,395 @@ Revisions:  05/22/12    Rev 1.0     mjefferies
 
             10/11/12    Rev 2.2       hmichalakeas
             - Switched to always using fallback shader assignment method (shading group hijack method)
-
-To-do's:
-        - Move to-do's to revisions as they are done
 '''
+
+from pymel.all import *
+import pymel.core as pm
+import os
+import hashlib
 # ----------------------------------------------------------------------------
 # source statements
 #
 # ----------------------------------------------------------------------------
 # global variables
-#
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# CLASSES
+# ----------------------------------------------------------------------------
+
+# Lets hope I can make this beautiful class.. I dunno
+class DeepPlayblastRenderLayer(object):
+    def __init__(self, strucfile, gpu_meshes=[]):
+        #Will remove strucfile
+        self.struc = strucfile
+        self.gpu_meshes = gpu_meshes
+        self.namespaces = []
+        self.colors = []
+        self.meshes_with_color = []
+        self.old_render_layer = None
+        self.playblast_panel = pm.paneLayout('modelPanel4',p1=True)
+        self.old_bkg_color = pm.displayRGBColor("background", query=True)
+        self.old_bkg_top_color = pm.displayRGBColor("backgroundTop", query=True)
+        self.old_bkg_bottom_color = pm.displayRGBColor("backgroundBottom",
+                                                       query=True)
+        pass
+
+    def get_namespace_colors(self, namespace):
+        pass
+
+    def get_meshes_with_color(self):
+        """ Retrieve a list of all the meshes that need to display color. """
+        allmeshes = pm.ls(type="mesh")
+        for obj in allmeshes:
+            display_colors = obj.getAttr('displayColors')
+            if display_colors:
+                self.meshes_with_color.append(obj)
+
+    def handle_gpu_mesh(self, switch):
+        lighting = switch
+        colorsMode = switch
+        for obj in self.gpu_meshes:
+            obj.setAttr('lighting', lighting)
+            obj.setAttr('colorsMode', colorsMode)
+
+    def push_namespace_materials(self):
+        shadingGroups = pm.ls(type="shadingEngine")
+        for shader in shadingGroups:
+            try:
+                namespace_shader = shader.attr("namespaceShader")
+            except MayaAttributeError:
+                continue
+            ns_connections = namespace_shader.listConnections(s=True, d=False)
+            surface_shader = shader.attr('surfaceShader')
+            if (ns_connections and not
+                    pm.isConnected(ns_connections[0].attr("outColor"),
+                                  shader.attr('surfaceShader'))):
+                ns_connections[0].connectAttr("outColor", shader.attr('surfaceShader'),
+                                              f=True)
+                # if len(ns_connections) and not pm.isConnected((ns_connections[0].attr(".outColor")),
+                #                                      (s +
+                #                                       ".surfaceShader")):
+                #     connectAttr((nsShader[0] + ".outColor"),
+                #                 (shadingGroups[i] + ".surfaceShader"),
+                #                 f=True)
+
+    def pop_namespace_materials(self):
+        shadingGroups = pm.ls(type="shadingEngine")
+        for shader in shadingGroups:
+            try:
+                default_shader = shader.attr("defaultShader")
+            except MayaAttributeError:
+                continue
+            ds_connections = default_shader.listConnections(s=True, d=False)
+            ds_is_connected = pm.isConnected(
+                ds_connections[0].attr("outColor"),
+                shader.attr("surfaceShader")
+            )
+            if ds_connections and not ds_is_connected:
+                ds_connections[0].connectAttr("outColor", shader.attr("surfaceShader"), f=True)
+
+    def push_layer(self):
+        self.old_render_layer = pm.editRenderLayerGlobals(query=True,
+                                        currentRenderLayer=True)
+        panel=pm.modelPanel(replacePanel='modelPanel4')
+        editor = pm.modelEditor(panel, query=True,
+                               displayTextures=False)
+        pm.modelEditor('modelPanel4', edit=True, displayTextures=False)
+        pm.editRenderLayerGlobals(currentRenderLayer=self.layer.name())
+        # pm.modelEditor('modelPanel4', query=True, displayTextures=False)
+        # Change the background color
+        pm.displayRGBColor("background", 0, 0, 0)
+        pm.displayRGBColor("backgroundTop", 0, 0, 0)
+        pm.displayRGBColor("backgroundBottom", 0, 0, 0)
+        self.get_meshes_with_color()
+        for obj in self.meshes_with_color:
+            obj.setAttr('displayColors', 0)
+        self.handle_gpu_mesh(True)
+        self.push_namespace_materials()
+
+    def pop_layer(self):
+        # Set back tot he old render layer
+        pm.editRenderLayerGlobals(currentRenderLayer=self.old_render_layer)
+        panel=pm.modelPanel(replacePanel='modelPanel4')
+        editor = pm.modelEditor(panel, edit=True,
+                               displayTextures=True)
+        # Reset the background colors
+        pm.displayRGBColor("background", *self.old_bkg_color)
+        pm.displayRGBColor("backgroundTop", *self.old_bkg_top_color)
+        pm.displayRGBColor("backgroundBottom", *self.old_bkg_bottom_color)
+        # Change the attributes on the meshes
+        for obj in self.meshes_with_color:
+            obj.setAttr('displayColors', 1)
+        self.handle_gpu_mesh(False)
+        self.pop_namespace_materials()
+
+    def create(self):
+        _loadPlugins()
+        # Query for the shading group set
+        assigned = pm.sets("initialShadingGroup", query=True)
+        if assigned:
+            # Create new lambert shader
+            default_lambert = pm.shadingNode("lambert", asShader=True)
+            attrs = default_lambert.listAttr(scalar=True, read=True, settable=True, keyable=True)
+            for attr in attrs:
+                num_child_attrs = pm.attributeQuery(
+                    attr.name(includeNode=False),
+                    node="lambert1",
+                    numberOfChildren=True
+                )
+                plug = attr.listConnections(plugs=True, destination=False, source=True)
+
+                if plug:
+                    attr.connectAttr(plug[0])
+
+                elif num_child_attrs:
+                    attr_val = pm.getAttr('lambert1.{0}'.format(attr))
+                    default_lambert.setAttr(attr_val)
+                    # Add parent attribute if there are any
+                    parent_attr = pm.attributeQuery(attr, lp=True, n="lambert1")
+                    if parent_attr and parent_attr[0] not in attrs:
+                        attrs.append(parent_attr[0])
+
+            shading_group = pm.sets(renderable=True, noSurfaceShader=True)
+            default_lambert.connectAttr(
+                'outColor',
+                '{0}.surfaceShader'.format(shading_group.name()),
+                f=True
+            )
+            for item in assigned:
+                is_object = pm.ls(item, o=True)
+                if is_object:
+                    try:
+                        shade_remove = pm.sets(item.name(),
+                                               rm='initialShadingGroup',
+                                               e=True)
+                        pm.sets(item, e=True, fe=shading_group)
+                    except RuntimeError:
+                        shade_remove = None
+                        print "Problem remove " + str(item) + " from the initialShadingGroup"
+        # Must replace with internal object function
+        _getNamespaceInfoFromStructureFile(self.struc, self.namespaces,
+                                           [], [], [], [], [])
+
+        _getColors(self.namespaces, self.colors)
+        old_namespace = pm.namespaceInfo(currentNamespace=True)
+        old_render_layer = pm.editRenderLayerGlobals(q=True, currentRenderLayer=True)
+        layer = ""
+        for i, cur_namespace in enumerate(self.namespaces):
+            # Will probably need to remove
+            if cur_namespace == 'stereoCam':
+                continue
+
+            if layer == '':
+                layer = pm.createRenderLayer(makeCurrent=True, name="namespaceLayer")
+
+            import pdb; pdb.set_trace()
+            if not pm.namespace(set=(":" + str(cur_namespace))):
+                continue
+
+            (red, green, blue) = self.colors[i]
+            dag_namespace = pm.namespaceInfo(dp=1, lod=True)
+            pm.select(dag_namespace, replace=True)
+            import pdb; pdb.set_trace()
+            geom = pm.ls(visible=True, type=['mesh', 'nurbsSurface'], dag=True, ni=True, selection=True)
+            gpu_mesh = []
+            if pm.objectType(tagFromType="rfxAlembicMeshGpuCache"):
+                gpu_mesh = pm.ls(selection=True, visible=True, dag=True,
+                                 type="rfxAlembicMeshGpuCache", long=True)
+
+            pm.select(clear=True)
+            if len(geom)>0:
+                material=str(shadingNode('surfaceShader', asShader=True))
+                setAttr((material + ".outColor"),
+                    red,green,blue,
+                    type='double3')
+                shader=str(cmds.sets(renderable=True,
+                                     noSurfaceShader=True, empty=True))
+                connectAttr((material + ".outColor"),(shader + ".surfaceShader"),
+                    f=True)
+                for j in range(0,len(geom)):
+                    existingShaders=listConnections(geom[j],
+                        source=False,
+                        plugs=False,
+                        destination=True,
+                        type="shadingEngine")
+                    if len(existingShaders)>0:
+                        editRenderLayerMembers(layer,geom[j])
+                        retry=0
+                        # first try to set the shader in object mode
+                        retry=1
+                        # Use shading group hijack method for everything...
+                        #if (catch(`sets -noWarnings -forceElement $shader $geom[$j]`)) {
+                        #    $retry = 1;
+                        #}
+                        if retry == 1:
+                            # Couldn't assign shader. Various alternative approaches to assigning the shader have not worked 100% of the time.
+                            # So add a couple of extra attributes to the shadingGroup - defaultShader and namespaceShader, and connect the respective
+                            # shaders to these. During pushRenderLayer (PlayblastTool), check for the existence of the namespaceShader, and if present,
+                            # find it's connection and plug it into the surfaceShader attribute, thus "hijacking" the shading group. During popRenderLayer,
+                            # connect the attribute plugged into defaultShader and plug this back into the surfaceShader attribute. This is messy, but it
+                            # sidesteps material assignment alltogether.
+                            for k in range(0,len(existingShaders)):
+                                if not objExists(existingShaders[k] + ".defaultShader"):
+                                    addAttr(existingShaders[k],
+                                        ln="defaultShader",at="message")
+                                    defaultMat=listConnections((existingShaders[k] + ".surfaceShader"),
+                                        s=1,d=0)
+                                    if len(defaultMat):
+                                        connectAttr((defaultMat[0] + ".message"),(existingShaders[k] + ".defaultShader"))
+
+                                    addAttr(existingShaders[k],
+                                        ln="namespaceShader",at="message")
+                                    connectAttr((material + ".message"),(existingShaders[k] + ".namespaceShader"))
+
+
+                            retry=0
+                            # temp until we feel confident retiring the next section of code
+
+                        if retry == 1:
+                            print "DeepPlayblastUtilities: Using alternate shader assignment strategy on " + geom[j] + "\n"
+                            # couldn't assign shader. Emergency fall-back: Switch back to defaultRenderLayer, unassign and re-assign the existing shaders, then
+                            # switch back to namespace layer and try again.
+                            existingShaders=stringArrayReverse(existingShaders)
+                            """
+                                            To-do: Add an explanation about why reversing the shaders array is necessary once we've confirmed that we are good. -HM
+                                            """
+                            # store the existing material assignments
+                            comps=[]
+                            indices=[]
+                            for k in range(1,len(existingShaders)):
+                                indices[k - 1]=len(comps)
+                                assigned=cmds.sets(existingShaders[k],
+                                    q=1)
+                                for m in range(0,len(assigned)):
+                                    obj=ls(o=assigned[m])
+                                    if obj[0] == geom[j]:
+                                        comps.append(assigned[m])
+
+
+
+                            # unassign the existing materials
+                            for k in range(0,len(existingShaders)):
+                                cmds.sets(geom[j],
+                                    rm=existingShaders[k],e=1)
+
+                            if catch( lambda: cmds.sets(geom[j],
+                                noWarnings=1,forceElement=shader) ):
+                                mel.warning("DeepPlayblastUtilities: Couldn't assign namespace shader to " + geom[j])
+                                continue
+
+
+                            else:
+                                print "DeepPlayblastUtilities: Alternate shader assignment worked for " + geom[j] + ".\n"
+
+                            editRenderLayerGlobals(currentRenderLayer="defaultRenderLayer")
+                            # switch back to defaultRenderLayer
+                            # and re-assign (assign first shader to whole object, then component assign subsequent shaders)
+                            cmds.sets(geom[j],
+                                e=1,fe=existingShaders[0])
+                            for k in range(0,len(indices)):
+                                end=int((k<len(indices) - 1) and indices[k + 1] or (len(comps)))
+                                for m in range(indices[k],end):
+                                    cmds.sets(comps[m],
+                                        e=1,fe=existingShaders[k + 1])
+
+
+                            # switch to namespace layer
+                            editRenderLayerGlobals(currentRenderLayer=layer)
+
+            if len(gpu_mesh)>0:
+                # end if size($existingShaders)
+                for j in range(0,len(gpuMesh)):
+                    pm.editRenderLayerMembers(layer,gpuMesh[j])
+                    pm.setAttr((gpuMesh[j] + ".defaultColor"),
+                        red,green,blue,
+                        type='double3')
+                    gpuMeshes.append(gpuMesh[j])
+
+
+
+        if layer != "":
+            pm.namespace(set=old_namespace)
+            pm.editRenderLayerGlobals(currentRenderLayer=old_render_layer)
+
+        self.layer = layer
+            # if geom:
+            #     material = shadingNode("surfaceShader", asShader=True)
+            #     material.setAttr("outColor", red, green, blue, type="double3")
+            #     shader = pm.sets(renderable=True, noSurfaceShader=True, empty=True)
+            #     pm.connectAttr(material.attr('outColor'),
+            #                    shader.attr("surfaceShader"), f=True)
+            #     for geo in geom:
+            #         existing_shaders = pm.listConnections(geo, source=False, plugs=False,
+            #                                               destination=True, type="shadingEngine")
+            #         if existing_shaders:
+            #             pm.editRenderLayerMembers(layer, geo)
+            #             retry = 0
+            #             # First try to set the shader in object mode
+            #             retry = 1
+            #             if retry == 1:
+            #                 for cur_shader in existing_shaders:
+            #                     try:
+            #                         default_shader = cur_shader.getAttr('defaultShader')
+            #                     except MayaAttributeError:
+            #                         # if not pm.objExists(cur_shader.getAttr('defaultShader')):
+            #                         cur_shader.addAttr(ln="defaultShader", at="message")
+            #                         default_mat = pm.listConnections(shader.getAttr('surfaceShader'),
+            #                                                          s=True, d=True)
+            #                         if default_mat:
+            #                             pm.connectAttr(default_mat.getAttr('message'),
+            #                                            cur_shader.getAttr('namespaceShader'))
+            #                 retry = 0
+
+            #             if retry == 1:
+            #                 print "DeepPlayblastUtilities: Use alternate strategy for {0}".format(geo)
+            #                 existing_shaders = pm.stringArrayReverse(existing_shaders)
+            #                 comps = []
+            #                 indices = []
+            #                 for i in range(1, len(existing_shaders)):
+            #                     indices.append(len(comps))
+            #                     assigned = pm.sets(existing_shaders[i], q=True)
+            #                     for j in range(0, len(assigned)):
+            #                         obj = pm.ls(o=assigned[j])
+            #                         if obj[0] == geo:
+            #                             comps.append(assigned[j])
+
+            #                 for i in range(0, len(existing_shaders)):
+            #                     pm.sets(geo, rm=existing_shaders[i], e=True)
+
+            #                 if pm.sets(geo, noWarnings=True, forceElement=shader):
+            #                     mel.warning("DeepPlayblast: Couldn't assign namespace shader")
+            #                     continue
+            #                 else:
+            #                     print "Alternate shader"
+
+            #                 pm.editRenderLayerGlobals(currentRenderLayer="defaultRenderLayer")
+            #                 pm.sets(geo, e=True, fe=existing_shaders[0])
+            #                 # XXX TODO FINISH EDITING
+            #                 for k in range(0,len(indices)):
+            #                     end=int((k<len(indices) - 1) and indices[k + 1] or (len(comps)))
+            #                     for m in range(indices[k],end):
+            #                         pm.sets(comps[m],
+            #                             e=1,fe=existingShaders[k + 1])
+            #                 # switch to namespace layer
+            #                 pm.editRenderLayerGlobals(currentRenderLayer=layer)
+
+            # if len(gpu_mesh)>0:
+            #     # end if size($existingShaders)
+            #     for j in range(0,len(gpu_mesh)):
+            #         pm.editRenderLayerMembers(layer,gpu_mesh[j])
+            #         pm.setAttr((gpu_mesh[j] + ".defaultColor"),
+            #             red,green,blue,
+            #             type='double3')
+            #         self.gpu_meshes.append(gpu_mesh[j])
+
+        # if layer != "":
+            # pm.namespace(set=old_namespace)
+            # pm.editRenderLayerGlobals(currentRenderLayer=old_render_layer)
+
+        # return layer
+
 # ----------------------------------------------------------------------------
 # load all plug-ins required for this mel script
 # ----------------------------------------------------------------------------
@@ -116,6 +492,8 @@ def stringArrayReverse(array):
 
 
 # ----------------------------------------------------------------------------
+# XXX TODO: This function will either no longer exist or will exist to query
+# the db.
 def _getNamespaceInfoFromStructureFile(strucfile,namespaces,paths,
                                        versions,types,phases,masterCam):
     # namespaces=[]
@@ -212,6 +590,7 @@ def DeepPlayblastPopNamespaceMaterials():
 # ----------------------------------------------------------------------------
 def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
     _loadPlugins()
+    import pdb; pdb.set_trace()
     # this code is a hack to get around a problem with render layers in maya
     assigned = sets("initialShadingGroup", q=True)
     if assigned:
@@ -224,8 +603,7 @@ def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
                 p=1,s=1,d=0)
 
             if len(plug):
-                connectAttr(plug[0],
-                    (defaultLambert + "." + attrs[i]))
+                connectAttr((defaultLambert + "." + attrs[i]), plug[0])
 
             elif numChildAttrs:
                 val=float(getAttr("lambert1." + attrs[i]))
@@ -243,6 +621,7 @@ def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
         for i in range(0,len(assigned)):
             isObject=len(ls(assigned[i], o=True))
             if isObject:
+                import pdb; pdb.set_trace()
                 if catch( lambda: cmds.sets(assigned[i],
                     rm="initialShadingGroup",e=1) ):
                     print "Problem removing " + assigned[i] + " from the initialShadingGroup\n"
@@ -260,6 +639,7 @@ def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
     oldNamespace=str(namespaceInfo(currentNamespace=True))
     oldRenderLayer=str(editRenderLayerGlobals(q=1,currentRenderLayer=1))
     layer=""
+    import pdb; pdb.set_trace()
     for i, cur_namespace in enumerate(namespaces):
         if cur_namespace == "stereoCam":
             continue
@@ -271,6 +651,7 @@ def DeepPlayblastMakeNamespaceRenderLayer(strucfile,gpuMeshes):
             continue
         (red, green, blue) = colors[i]
         select(namespaceInfo(dp=1, lod=True), replace=True)
+        import pdb; pdb.set_trace()
         geom=ls(visible=1,type=['mesh', 'nurbsSurface'],dag=1,ni=1,sl=1)
         gpuMesh=[]
         if objectType(tagFromType="rfxAlembicMeshGpuCache") != 0:
@@ -531,58 +912,59 @@ def DeepPlayblastMakeXML(strucfile,deepPlayblastFile,namespaceTrack):
     return result
 
 def pushRenderLayer(renderLayer):
-	melGlobals.initVar( 'string', 'gRFXPlayblastModelPanel' )
-	melGlobals.initVar( 'string[]', 'gMeshesWithColorsOn' )
-	melGlobals.initVar( 'string[]', 'gGpuMeshes' )
-	# saved settings
-	melGlobals.initVar( 'string', 'gOldRenderLayer' )
-	melGlobals.initVar( 'int', 'gOldDisplayTextures' )
-	melGlobals.initVar( 'float[]', 'gOldBackgroundColor' )
-	melGlobals.initVar( 'float[]', 'gOldBackgroundTopColor' )
-	melGlobals.initVar( 'float[]', 'gOldBackgroundBottomColor' )
-	melGlobals['gOldRenderLayer']=str(editRenderLayerGlobals(q=1,currentRenderLayer=1))
-	melGlobals['gOldDisplayTextures']=int(modelEditor(melGlobals['gRFXPlayblastModelPanel'],
-		q=1,displayTextures=1))
-	melGlobals['gOldBackgroundColor']=displayRGBColor("background",
-		q=1)
-	melGlobals['gOldBackgroundTopColor']=displayRGBColor("backgroundTop",
-		q=1)
-	melGlobals['gOldBackgroundBottomColor']=displayRGBColor("backgroundBottom",
-		q=1)
-	editRenderLayerGlobals(currentRenderLayer=renderLayer)
-	modelEditor(melGlobals['gRFXPlayblastModelPanel'],
-		edit=1,displayTextures=False)
-	displayRGBColor("background",0,0,0)
-	displayRGBColor("backgroundTop",0,0,0)
-	displayRGBColor("backgroundBottom",0,0,0)
-	for obj in melGlobals['gMeshesWithColorsOn']:
-		setAttr((str(obj) + ".displayColors"),
-			0)
+    import pdb; pdb.set_trace()
+    melGlobals.initVar( 'string', 'gRFXPlayblastModelPanel' )
+    melGlobals.initVar( 'string[]', 'gMeshesWithColorsOn' )
+    melGlobals.initVar( 'string[]', 'gGpuMeshes' )
+    # saved settings
+    melGlobals.initVar( 'string', 'gOldRenderLayer' )
+    melGlobals.initVar( 'int', 'gOldDisplayTextures' )
+    melGlobals.initVar( 'float[]', 'gOldBackgroundColor' )
+    melGlobals.initVar( 'float[]', 'gOldBackgroundTopColor' )
+    melGlobals.initVar( 'float[]', 'gOldBackgroundBottomColor' )
+    melGlobals['gOldRenderLayer']=str(editRenderLayerGlobals(q=1,currentRenderLayer=1))
+    melGlobals['gOldDisplayTextures']=int(modelEditor(melGlobals['gRFXPlayblastModelPanel'],
+        q=1,displayTextures=1))
+    melGlobals['gOldBackgroundColor']=displayRGBColor("background",
+        q=1)
+    melGlobals['gOldBackgroundTopColor']=displayRGBColor("backgroundTop",
+        q=1)
+    melGlobals['gOldBackgroundBottomColor']=displayRGBColor("backgroundBottom",
+        q=1)
+    editRenderLayerGlobals(currentRenderLayer=renderLayer)
+    modelEditor(melGlobals['gRFXPlayblastModelPanel'],
+        edit=1,displayTextures=False)
+    displayRGBColor("background",0,0,0)
+    displayRGBColor("backgroundTop",0,0,0)
+    displayRGBColor("backgroundBottom",0,0,0)
+    for obj in melGlobals['gMeshesWithColorsOn']:
+        setAttr((str(obj) + ".displayColors"),
+            0)
 
-	DeepPlayblastHandleGpuMeshRenderLayer(melGlobals['gGpuMeshes'], 1)
-	DeepPlayblastPushNamespaceMaterials()
+    DeepPlayblastHandleGpuMeshRenderLayer(melGlobals['gGpuMeshes'], 1)
+    DeepPlayblastPushNamespaceMaterials()
 
 
 def popRenderLayer():
-	melGlobals.initVar( 'string', 'gRFXPlayblastModelPanel' )
-	melGlobals.initVar( 'string[]', 'gMeshesWithColorsOn' )
-	melGlobals.initVar( 'string[]', 'gGpuMeshes' )
-	# saved settings
-	melGlobals.initVar( 'string', 'gOldRenderLayer' )
-	melGlobals.initVar( 'int', 'gOldDisplayTextures' )
-	melGlobals.initVar( 'float[]', 'gOldBackgroundColor' )
-	melGlobals.initVar( 'float[]', 'gOldBackgroundTopColor' )
-	melGlobals.initVar( 'float[]', 'gOldBackgroundBottomColor' )
-	editRenderLayerGlobals(currentRenderLayer=melGlobals['gOldRenderLayer'])
-	modelEditor(melGlobals['gRFXPlayblastModelPanel'],
-		edit=1,displayTextures=melGlobals['gOldDisplayTextures'])
-	displayRGBColor("background",melGlobals['gOldBackgroundColor'][0],melGlobals['gOldBackgroundColor'][1],melGlobals['gOldBackgroundColor'][2])
-	displayRGBColor("backgroundTop",melGlobals['gOldBackgroundTopColor'][0],melGlobals['gOldBackgroundTopColor'][1],melGlobals['gOldBackgroundTopColor'][2])
-	displayRGBColor("backgroundBottom",melGlobals['gOldBackgroundBottomColor'][0],melGlobals['gOldBackgroundBottomColor'][1],melGlobals['gOldBackgroundBottomColor'][2])
-	for obj in melGlobals['gMeshesWithColorsOn']:
-		setAttr((str(obj) + ".displayColors"),
-			1)
+    melGlobals.initVar( 'string', 'gRFXPlayblastModelPanel' )
+    melGlobals.initVar( 'string[]', 'gMeshesWithColorsOn' )
+    melGlobals.initVar( 'string[]', 'gGpuMeshes' )
+    # saved settings
+    melGlobals.initVar( 'string', 'gOldRenderLayer' )
+    melGlobals.initVar( 'int', 'gOldDisplayTextures' )
+    melGlobals.initVar( 'float[]', 'gOldBackgroundColor' )
+    melGlobals.initVar( 'float[]', 'gOldBackgroundTopColor' )
+    melGlobals.initVar( 'float[]', 'gOldBackgroundBottomColor' )
+    editRenderLayerGlobals(currentRenderLayer=melGlobals['gOldRenderLayer'])
+    modelEditor(melGlobals['gRFXPlayblastModelPanel'],
+        edit=1,displayTextures=melGlobals['gOldDisplayTextures'])
+    displayRGBColor("background",melGlobals['gOldBackgroundColor'][0],melGlobals['gOldBackgroundColor'][1],melGlobals['gOldBackgroundColor'][2])
+    displayRGBColor("backgroundTop",melGlobals['gOldBackgroundTopColor'][0],melGlobals['gOldBackgroundTopColor'][1],melGlobals['gOldBackgroundTopColor'][2])
+    displayRGBColor("backgroundBottom",melGlobals['gOldBackgroundBottomColor'][0],melGlobals['gOldBackgroundBottomColor'][1],melGlobals['gOldBackgroundBottomColor'][2])
+    for obj in melGlobals['gMeshesWithColorsOn']:
+        setAttr((str(obj) + ".displayColors"),
+            1)
 
-	DeepPlayblastHandleGpuMeshRenderLayer(melGlobals['gGpuMeshes'], 0)
-	DeepPlayblastPopNamespaceMaterials()
+    DeepPlayblastHandleGpuMeshRenderLayer(melGlobals['gGpuMeshes'], 0)
+    DeepPlayblastPopNamespaceMaterials()
 
