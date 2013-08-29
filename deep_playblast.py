@@ -1,78 +1,29 @@
 #!/usr/bin/env python
 
-'''
-Description:
-    A collection of utility functions for deep playblasts:
 
-    DeepPlayblastMakeNamespaceRenderLayer
-        Prepare for deep playblast by making a namespace render layer
+#----------------------------------------------------------------------------#
+#------------------------------------------------------------ HEADER_START --#
+"""
+@newField description: Description
+@newField category: Category
+@newField application: Application
 
-    DeepPlayblastHandleGpuMeshRenderLayer
-        Handle gpu mesh nodes to treat them like they are in the render layer
+@author:
+    slu
 
-    DeepPlayblastMakeXML
-        Generate an xml string describing the deep playblast
+@organization:
+    ReelFX
 
-Dependancies:
-    getPath.mel
-    parseXML.mel
-    xml_parser plug-in
-    fileQuery plug-in
-    AnimSlicesUtilities.mel
+@description:
+    Utility to create a Deep Playblast Render Layer to distinguish
+    animation slices.
 
-Documentation:
+@category:
+    - Animation
 
-Examples:
-
-Notes:
-
-
-Bugs:
-
-Original:   02/29/12
-Revisions:  05/22/12    Rev 1.0     mjefferies
-            - added the specification of a filename to use as the alternate movie file with deep
-              playblast tracks in it.
-
-            05/24/12    Rev 1.1     mjefferies
-            - modified to take a structure file rather than the seq/shot, so that an alternate
-              structure file can be given.
-
-            06/06/12    Rev 1.2     mjefferies
-            - added support for deep playblasting gpumeshes and added the phase to the xml data
-
-            07/19/12    Rev 1.3     mjefferies
-            - added export of the assigned supervisor and artist usernames for each slice
-
-            08/08/12    Rev 1.4     mjefferies
-            - added a hack to get around an issue in maya when creating the namespaces render layer
-
-            08/09/12    Rev 1.5        hmichalakeas
-            - added a check to see if rfxAlembicMeshGpuCache type is present before ls -type ...
-
-            08/16/12    Rev 1.6     mjefferies
-            - added some robustness to deal with removing intermediate objects
-              that have been assigned to the initialShadingGroup
-
-            08/22/12    Rev 1.7        hmichalakeas
-            - In DeepPlayblastMakeNamespaceRenderLayer, accounted for the possibility that lambert1 may have been mapped or otherwise adjusted.
-
-            08/24/12    Rev 1.8       hmichalakeas
-            - Switched fallback strategy for when maya gives a syntax error when assigning a shader. New approach switches layer back to the
-            default render layer, unassigns then re-assigns the material assignments, switches to namespace layer and tries to assign the shader again.
-
-            08/30/12    Rev 1.9       hmichalakeas
-            - Further tweaks to fallback shader assignment strategy
-
-            08/30/12    Rev 2.0       hmichalakeas
-            - Switched to a more robust fallback shader assignment strategy (setup for shading group "hijacking" - see inline notes)
-
-            09/19/12    Rev 2.1     mjefferies
-            - Switched getting colors routine for deep playblast to use the same color for all props in a set.
-
-            10/11/12    Rev 2.2       hmichalakeas
-            - Switched to always using fallback shader assignment method (shading group hijack method)
-'''
+@application:
+    - Maya
+"""
 
 # Built-in
 import json
@@ -83,6 +34,9 @@ import random
 # Maya
 from pymel.all import *
 import pymel.core as pm
+
+# ReelFX
+from pipe_utils.sequence import FrameRange
 
 # ----------------------------------------------------------------------------
 # source statements
@@ -97,17 +51,39 @@ import pymel.core as pm
 
 # Lets hope I can make this beautiful class.. I dunno
 class DeepPlayblastRenderLayer(object):
-    def __init__(self, gpu_meshes=[]):
-        self.gpu_meshes = gpu_meshes
+
+    def __init__(self, metadata_path='', filename= '', camera='',
+                 frame_range='', format='', compression='', widthHeight=''):
+        """
+        .. class:: DeepPlayblastRenderLayer
+
+        This is the object to create a deep playblast render layer.
+        """
+        self.metadata_path = metadata_path
+        self.camera = camera
+        self.frame_range = FrameRange.parse(frame_range)
+        self.format = format
+        self.compression = compression
+        self.widthHeight = widthHeight
+        self.filename = filename
+        self.input_pb_args = {'filename' : self.filename,
+                              'frame' : self.frame_range.get_frames(),
+                              'format' : self.format,
+                              'compression' : self.compression,
+                              'widthHeight' : self.widthHeight}
+        self.gpu_meshes = []
         self.namespaces = []
         self.colors = []
         self.meshes_with_color = []
         self.old_render_layer = None
-        self.playblast_panel = pm.paneLayout('modelPanel4',p1=True)
+        self.playblast_panel = pm.modelPanel(replacePanel='modelPanel4')
         self.old_bkg_color = pm.displayRGBColor("background", query=True)
         self.old_bkg_top_color = pm.displayRGBColor("backgroundTop", query=True)
-        self.old_bkg_bottom_color = pm.displayRGBColor("backgroundBottom",
-                                                       query=True)
+        self.old_bkg_bottom_color = pm.displayRGBColor(
+            "backgroundBottom",
+            query=True
+        )
+
     def _getRandomColors(self, combineSetColors = None):
         for namespace in self.namespaces:
             if combineSetColors:
@@ -127,6 +103,24 @@ class DeepPlayblastRenderLayer(object):
             # b=float(mel.rand("DeepPlayblast", 1, 25) / 25.0)
             self.colors.append([r,g,b])
 
+    def write_metadata(self):
+        colors = []
+        namespace_color_map = dict(zip(self.namespaces, self.colors))
+        metadata = json.dumps(namespace_color_map)
+        try:
+            with open(self.metadata_path, 'w') as f:
+                json.dump(metadata, f)
+        except IOError:
+            print "Unable to write metadata path: %s" % self.metadata_path
+
+    def read_metadata(self):
+        try:
+            with open(self.metadata_path, 'r') as f:
+                metadata = json.load(f)
+        except IOError:
+            print "Unable to read metadata path: %s" % self.metadata_path
+        self.metadata = eval(metadata)
+
     def get_namespace_colors(self):
         self._getRandomColors()
 
@@ -145,7 +139,15 @@ class DeepPlayblastRenderLayer(object):
             obj.setAttr('lighting', lighting)
             obj.setAttr('colorsMode', colorsMode)
 
+    def playblast(self):
+        # Set up the camera
+        pm.modelEditor(self.playblast_panel, edit=True, camera=self.camera)
+        pm.playblast(**self.playblast_args)
+
     def push_namespace_materials(self):
+        """ Connected the outColor attribute of the namespace
+        shaders to the surface shader.
+        """
         shadingGroups = pm.ls(type="shadingEngine")
         for shader in shadingGroups:
             try:
@@ -154,13 +156,21 @@ class DeepPlayblastRenderLayer(object):
                 continue
             ns_connections = namespace_shader.listConnections(s=True, d=False)
             surface_shader = shader.attr('surfaceShader')
-            if (ns_connections and not
-                    pm.isConnected(ns_connections[0].attr("outColor"),
-                                  shader.attr('surfaceShader'))):
-                ns_connections[0].connectAttr("outColor", shader.attr('surfaceShader'),
-                                              f=True)
+            ns_is_connected = pm.isConnected(
+                ns_connections[0].attr("outColor"),
+                shader.attr("surfaceShader")
+            )
+            if ns_connections and not ns_is_connected:
+                ns_connections[0].connectAttr(
+                    "outColor",
+                    shader.attr('surfaceShader'),
+                    f=True
+                )
 
     def pop_namespace_materials(self):
+        """ Connect the outColor to the default shader to the surface
+        shader.
+        """
         shadingGroups = pm.ls(type="shadingEngine")
         for shader in shadingGroups:
             try:
@@ -175,13 +185,12 @@ class DeepPlayblastRenderLayer(object):
             if ds_connections and not ds_is_connected:
                 ds_connections[0].connectAttr("outColor", shader.attr("surfaceShader"), f=True)
 
-    def push_layer(self):
+    def push(self):
         self.old_render_layer = pm.editRenderLayerGlobals(query=True,
                                         currentRenderLayer=True)
-        panel=pm.modelPanel(replacePanel='modelPanel4')
-        editor = pm.modelEditor(panel, query=True,
-                               displayTextures=False)
-        pm.modelEditor('modelPanel4', edit=True, displayTextures=False)
+        editor = pm.modelEditor(self.playblast_panel, edit=True,
+                               displayTextures=False, displayAppearance='smoothShaded')
+        # pm.modelEditor(editor, edit=True, displayTextures=False)
         pm.editRenderLayerGlobals(currentRenderLayer=self.layer.name())
         # pm.modelEditor('modelPanel4', query=True, displayTextures=False)
         # Change the background color
@@ -194,11 +203,10 @@ class DeepPlayblastRenderLayer(object):
         self.handle_gpu_mesh(True)
         self.push_namespace_materials()
 
-    def pop_layer(self):
+    def pop(self):
         # Set back tot he old render layer
         pm.editRenderLayerGlobals(currentRenderLayer=self.old_render_layer)
-        panel=pm.modelPanel(replacePanel='modelPanel4')
-        editor = pm.modelEditor(panel, edit=True,
+        editor = pm.modelEditor(self.playblast_panel, edit=True,
                                displayTextures=True)
         # Reset the background colors
         pm.displayRGBColor("background", *self.old_bkg_color)
@@ -292,7 +300,6 @@ class DeepPlayblastRenderLayer(object):
             (red, green, blue) = self.colors[i]
             dag_namespace = pm.namespaceInfo(dp=1, lod=True)
             pm.select(dag_namespace, replace=True)
-            import pdb; pdb.set_trace()
             geom = pm.ls(visible=True, type=['mesh', 'nurbsSurface'], dag=True, ni=True, selection=True)
             gpu_mesh = []
             if pm.objectType(tagFromType="rfxAlembicMeshGpuCache"):
@@ -415,6 +422,23 @@ class DeepPlayblastRenderLayer(object):
             pm.editRenderLayerGlobals(currentRenderLayer=old_render_layer)
 
         self.layer = layer
+
+    @property
+    def playblast_args(self):
+        playblast_args = {
+            'showOrnaments' : False,
+            'rawFrameNumbers' : True,
+            'viewer' : False,
+            'offScreen' : True,
+            'forceOverwrite' : True,
+            'percent' : 100,
+            'quality' : 100,
+        }
+        # Only if the input playblast arguments are specified do we add them
+        for arg, value in self.input_pb_args.iteritems():
+            if value:
+                playblast_args[arg] = value
+        return playblast_args
 
 # ----------------------------------------------------------------------------
 # load all plug-ins required for this mel script
