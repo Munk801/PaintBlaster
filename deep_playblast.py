@@ -52,20 +52,28 @@ from pipe_utils.sequence import FrameRange
 
 # Lets hope I can make this beautiful class.. I dunno
 class DeepPlayblastRenderLayer(object):
+    """ A render layer that performs a 'Deep' Playblast.  This
+    layer can be pushed and popped to generate a flat shade color per
+    namespace in the scene.
 
+    Attributes:
+        metadata_path: (str) Where the json file should exist.
+        filename: (str) Where the images should exist.
+        camera: (str) Which camera to playblast from.
+        frame_range: (str) Frame range to playblast.
+        compression: (str) What type of compression to use.
+        width: (str) width of the image.
+        height: (str) height of the image.
+
+    """
     def __init__(self, metadata_path='', filename= '', camera='',
-                 frame_range='', format='', compression='', widthHeight=''):
-        """
-        .. class:: DeepPlayblastRenderLayer
-
-        This is the object to create a deep playblast render layer.
-        """
+                 frame_range='', format='', compression='', width='', height=''):
         self.metadata_path = metadata_path
         self.camera = camera
         self.frame_range = FrameRange.parse(frame_range)
         self.format = format
         self.compression = compression
-        self.widthHeight = widthHeight
+        self.widthHeight = (width, height)
         self.filename = filename
         self.input_pb_args = {'filename' : self.filename,
                               'frame' : self.frame_range.get_frames(),
@@ -105,6 +113,19 @@ class DeepPlayblastRenderLayer(object):
             self.colors.append([r,g,b])
 
     def write_metadata(self):
+        """ Create the json file the contains the pairing between namespaces
+        and colors.
+
+        Args:
+            None
+
+        Returns:
+            None
+
+        Raises:
+            IOError: If the path is unable to write the data.
+
+        """
         colors = []
         namespace_color_map = dict(zip(self.namespaces, self.colors))
         metadata = json.dumps(namespace_color_map)
@@ -115,6 +136,18 @@ class DeepPlayblastRenderLayer(object):
             print "Unable to write metadata path: %s" % self.metadata_path
 
     def read_metadata(self):
+        """ Read in the json file and stores that in a metadata variable.
+
+        Args:
+            None
+
+        Returns:
+            None
+
+        Raises:
+            IOError: If the file is unable to be read.
+
+        """
         try:
             with open(self.metadata_path, 'r') as f:
                 metadata = json.load(f)
@@ -123,6 +156,7 @@ class DeepPlayblastRenderLayer(object):
         self.metadata = eval(metadata)
 
     def get_namespace_colors(self):
+        """ Retrieve the colors from the namespace. """
         self._getRandomColors()
 
     def get_meshes_with_color(self):
@@ -134,6 +168,20 @@ class DeepPlayblastRenderLayer(object):
                 self.meshes_with_color.append(obj)
 
     def handle_gpu_mesh(self, switch):
+        """ Set the attributes of the gpu mesh for whether lighting
+        or color needs to be displayed.
+
+        Args:
+            switch: (bool)
+                Whether to turn the attributes on or off.
+
+        Returns:
+            None
+
+        Raises:
+            None
+
+        """
         lighting = switch
         colorsMode = switch
         for obj in self.gpu_meshes:
@@ -141,6 +189,9 @@ class DeepPlayblastRenderLayer(object):
             obj.setAttr('colorsMode', colorsMode)
 
     def playblast(self):
+        """ Run the playblast of the image.  Will only work if the layer
+        has been pushed.
+        """
         # Set up the camera
         pm.modelEditor(self.playblast_panel, edit=True, camera=self.camera)
         pm.playblast(**self.playblast_args)
@@ -187,6 +238,7 @@ class DeepPlayblastRenderLayer(object):
                 ds_connections[0].connectAttr("outColor", shader.attr("surfaceShader"), f=True)
 
     def push(self):
+        """ Push the render layer to display in the scene. """
         self.old_render_layer = pm.editRenderLayerGlobals(query=True,
                                         currentRenderLayer=True)
         editor = pm.modelEditor(self.playblast_panel, edit=True,
@@ -205,6 +257,7 @@ class DeepPlayblastRenderLayer(object):
         self.push_namespace_materials()
 
     def pop(self):
+        """ Pop the render layer to remove display in the scene. """
         # Set back tot he old render layer
         pm.editRenderLayerGlobals(currentRenderLayer=self.old_render_layer)
         editor = pm.modelEditor(self.playblast_panel, edit=True,
@@ -220,6 +273,7 @@ class DeepPlayblastRenderLayer(object):
         self.pop_namespace_materials()
 
     def get_namespaces(self):
+        """ Retrieves the namespaces from the scene. """
         namespaces = []
         nodes = pm.ls(visible=True, type=['mesh', 'nurbsSurface'])
         for node in nodes:
@@ -233,7 +287,10 @@ class DeepPlayblastRenderLayer(object):
         self.namespaces = list(set(namespaces))
 
     def create(self):
-        _loadPlugins()
+        """ Create the render layer.  This will generate the colors for
+        each namespace, create flat shaders for each of these colors per
+        namespace. A namespace render layer is also generated in maya.
+        """
         # Query for the shading group set
         assigned = pm.sets("initialShadingGroup", query=True)
         if assigned:
@@ -385,20 +442,25 @@ class DeepPlayblastRenderLayer(object):
 
                             if catch( lambda: cmds.sets(geom[j],
                                 noWarnings=1,forceElement=shader) ):
-                                mel.warning("DeepPlayblastUtilities: Couldn't assign namespace shader to " + geom[j])
+                                mel.warning("DeepPlayblastUtilities: Couldn't "
+                                            "assign namespace shader to " + geom[j])
                                 continue
 
 
                             else:
-                                print "DeepPlayblastUtilities: Alternate shader assignment worked for " + geom[j] + ".\n"
+                                print ("DeepPlayblastUtilities: Alternate "
+                                       "shader assignment worked for " +
+                                       geom[j] + ".\n")
 
                             editRenderLayerGlobals(currentRenderLayer="defaultRenderLayer")
                             # switch back to defaultRenderLayer
-                            # and re-assign (assign first shader to whole object, then component assign subsequent shaders)
+                            # and re-assign (assign first shader to whole
+                            # object, then component assign subsequent shaders)
                             cmds.sets(geom[j],
                                 e=1,fe=existingShaders[0])
                             for k in range(0,len(indices)):
-                                end=int((k<len(indices) - 1) and indices[k + 1] or (len(comps)))
+                                end = (int((k<len(indices) - 1) and
+                                           indices[k + 1] or (len(comps))))
                                 for m in range(indices[k],end):
                                     cmds.sets(comps[m],
                                         e=1,fe=existingShaders[k + 1])
@@ -425,6 +487,7 @@ class DeepPlayblastRenderLayer(object):
         self.layer = layer
 
     def stringArrayReverse(self, array):
+        """ Reverses the array. """
         result=[]
         s=len(array) - 1
         for i in range(0,s+1):
