@@ -51,7 +51,7 @@ from pipe_utils.sequence import FrameRange
 # ----------------------------------------------------------------------------
 
 # Lets hope I can make this beautiful class.. I dunno
-class DeepPlayblastRenderLayer(object):
+class RenderLayer(object):
     """ A render layer that performs a 'Deep' Playblast.  This
     layer can be pushed and popped to generate a flat shade color per
     namespace in the scene.
@@ -73,7 +73,7 @@ class DeepPlayblastRenderLayer(object):
         self.frame_range = FrameRange.parse(frame_range)
         self.format = format
         self.compression = compression
-        self.widthHeight = (width, height)
+        self.widthHeight = (int(width), int(height))
         self.filename = filename
         self.input_pb_args = {'filename' : self.filename,
                               'frame' : self.frame_range.get_frames(),
@@ -128,7 +128,7 @@ class DeepPlayblastRenderLayer(object):
         """
         colors = []
         namespace_color_map = dict(zip(self.namespaces, self.colors))
-        metadata = json.dumps(namespace_color_map)
+        metadata = namespace_color_map
         try:
             with open(self.metadata_path, 'w') as f:
                 json.dump(metadata, f)
@@ -193,7 +193,7 @@ class DeepPlayblastRenderLayer(object):
         has been pushed.
         """
         # Set up the camera
-        pm.modelEditor(self.playblast_panel, edit=True, camera=self.camera)
+        pm.modelEditor(self.playblast_panel, edit=True, camera=self.camera, displayAppearance='flatShaded')
         pm.playblast(**self.playblast_args)
 
     def push_namespace_materials(self):
@@ -253,7 +253,7 @@ class DeepPlayblastRenderLayer(object):
         self.get_meshes_with_color()
         for obj in self.meshes_with_color:
             obj.setAttr('displayColors', 0)
-        self.handle_gpu_mesh(True)
+        self.handle_gpu_mesh(0)
         self.push_namespace_materials()
 
     def pop(self):
@@ -269,13 +269,14 @@ class DeepPlayblastRenderLayer(object):
         # Change the attributes on the meshes
         for obj in self.meshes_with_color:
             obj.setAttr('displayColors', 1)
-        self.handle_gpu_mesh(False)
+        self.handle_gpu_mesh(1)
         self.pop_namespace_materials()
 
     def get_namespaces(self):
         """ Retrieves the namespaces from the scene. """
         namespaces = []
-        nodes = pm.ls(visible=True, type=['mesh', 'nurbsSurface'])
+        nodes = pm.ls(visible=True, type=['mesh', 'nurbsSurface',
+                                         'rfxAlembicMeshGpuCache'])
         for node in nodes:
             name = node.name()
             if '|' in name:
@@ -332,7 +333,7 @@ class DeepPlayblastRenderLayer(object):
                         pm.sets(item, e=True, fe=shading_group)
                     except RuntimeError:
                         shade_remove = None
-                        print "Problem remove " + str(item) + " from the initialShadingGroup"
+                        print "Problem removing " + str(item) + " from the initialShadingGroup"
         # Get namespaces and generate colors based on those namespaces
         self.get_namespaces()
         self.get_namespace_colors()
@@ -361,7 +362,7 @@ class DeepPlayblastRenderLayer(object):
             geom = pm.ls(visible=True, type=['mesh', 'nurbsSurface'], dag=True, ni=True, selection=True)
             gpu_mesh = []
             if pm.objectType(tagFromType="rfxAlembicMeshGpuCache"):
-                gpu_mesh = pm.ls(selection=True, visible=True, dag=True,
+                gpu_mesh = pm.ls(selection=True, visible=True, dag=True, noIntermediate=True,
                                  type="rfxAlembicMeshGpuCache", long=True)
 
             pm.select(clear=True)
@@ -414,7 +415,7 @@ class DeepPlayblastRenderLayer(object):
                             # temp until we feel confident retiring the next section of code
 
                         if retry == 1:
-                            print "DeepPlayblastUtilities: Using alternate shader assignment strategy on " + geom[j] + "\n"
+                            print "Using alternate shader assignment strategy on " + geom[j] + "\n"
                             # couldn't assign shader. Emergency fall-back: Switch back to defaultRenderLayer, unassign and re-assign the existing shaders, then
                             # switch back to namespace layer and try again.
                             existingShaders = self.stringArrayReverse(existingShaders)
@@ -442,7 +443,7 @@ class DeepPlayblastRenderLayer(object):
 
                             if catch( lambda: cmds.sets(geom[j],
                                 noWarnings=1,forceElement=shader) ):
-                                mel.warning("DeepPlayblastUtilities: Couldn't "
+                                mel.warning("Couldn't "
                                             "assign namespace shader to " + geom[j])
                                 continue
 
@@ -471,12 +472,13 @@ class DeepPlayblastRenderLayer(object):
 
             if len(gpu_mesh)>0:
                 # end if size($existingShaders)
-                for j in range(0,len(gpuMesh)):
-                    pm.editRenderLayerMembers(layer,gpuMesh[j])
-                    pm.setAttr((gpuMesh[j] + ".defaultColor"),
+                for j in range(0,len(gpu_mesh)):
+                    pm.editRenderLayerMembers(layer,gpu_mesh[j])
+                    pm.setAttr((gpu_mesh[j] + ".defaultColor"),
                         red,green,blue,
                         type='double3')
-                    gpuMeshes.append(gpuMesh[j])
+                    pm.setAttr((gpu_mesh[j] + ".colorsMode"), 0)
+                    self.gpu_meshes.append(gpu_mesh[j])
 
 
 
@@ -485,6 +487,7 @@ class DeepPlayblastRenderLayer(object):
             pm.editRenderLayerGlobals(currentRenderLayer=old_render_layer)
 
         self.layer = layer
+        self.gpu_meshes = list(set(self.gpu_meshes))
 
     def stringArrayReverse(self, array):
         """ Reverses the array. """
